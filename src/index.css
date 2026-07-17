@@ -44,6 +44,13 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+    background:
+      radial-gradient(circle at 18% 10%, hsl(160 84% 39% / 0.14), transparent 28rem),
+      radial-gradient(circle at 85% 12%, hsl(190 90% 45% / 0.12), transparent 24rem),
+      linear-gradient(180deg, hsl(222 47% 5%), hsl(222 44% 6%) 45%, hsl(222 47% 5%));
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
   code,
   pre,
@@ -73,14 +80,55 @@
     background-image: linear-gradient(135deg, hsl(160 84% 55%), hsl(190 90% 55%));
   }
   .glass {
-    background: hsl(222 44% 8% / 0.72);
-    backdrop-filter: blur(14px);
+    background: linear-gradient(135deg, hsl(222 44% 8% / 0.82), hsl(217 33% 10% / 0.68));
+    backdrop-filter: blur(18px);
+  }
+  .premium-card {
+    @apply border border-white/10 bg-card/80 shadow-2xl shadow-black/25;
+    background-image:
+      linear-gradient(135deg, hsl(222 44% 10% / 0.92), hsl(222 44% 7% / 0.88)),
+      radial-gradient(circle at top right, hsl(160 84% 39% / 0.14), transparent 18rem);
+  }
+  .ambient-orb {
+    @apply pointer-events-none absolute rounded-full blur-3xl;
+    background: hsl(160 84% 39% / 0.16);
+  }
+  .soft-grid {
+    background-image: radial-gradient(hsl(160 84% 39% / 0.12) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .interactive-card {
+    @apply transition-all duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-2xl hover:shadow-primary/5;
+  }
+  .animate-float {
+    animation: float 7s ease-in-out infinite;
   }
   .grid-pattern {
     background-image:
       linear-gradient(hsl(217 33% 14% / 0.5) 1px, transparent 1px),
       linear-gradient(90deg, hsl(217 33% 14% / 0.5) 1px, transparent 1px);
     background-size: 44px 44px;
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

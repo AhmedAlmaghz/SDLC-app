@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   ArrowLeft,
@@ -14,6 +14,7 @@ import {
   Smartphone,
   Sparkles,
   SquareTerminal,
+  WandSparkles,
   Webhook,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -45,10 +46,32 @@ const APP_TYPE_ICONS: Record<AppType, typeof Globe> = {
 const PLATFORMS = ["الويب", "iOS", "Android", "Windows", "macOS", "Linux"];
 
 const STEPS = [
-  { id: 1, title: "الفكرة", icon: Lightbulb },
-  { id: 2, title: "النطاق", icon: Rocket },
-  { id: 3, title: "القدرات", icon: Settings2 },
+  { id: 1, title: "الفكرة", icon: Lightbulb, hint: "النية والمشكلة" },
+  { id: 2, title: "النطاق", icon: Rocket, hint: "السوق والمنصة" },
+  { id: 3, title: "القدرات", icon: Settings2, hint: "الميزات والحواجز" },
 ];
+
+const IDEA_PROMPTS = [
+  "من المستخدم الأساسي وما الألم الذي يعيشه اليوم؟",
+  "ما النتيجة التي يجب أن يراها المستخدم خلال أول 5 دقائق؟",
+  "ما الميزة التي تجعل المنتج مختلفاً عن البدائل؟",
+  "ما القيود غير القابلة للتفاوض: ميزانية، أمان، زمن، امتثال؟",
+];
+
+const FEATURE_PRESETS: Record<"commerce" | "saas" | "ai", { label: string; features: FeatureKey[] }> = {
+  commerce: {
+    label: "تجارة/حجوزات",
+    features: ["auth", "payments", "notifications", "analytics", "adminPanel"],
+  },
+  saas: {
+    label: "SaaS متعدد الفرق",
+    features: ["auth", "multiTenant", "analytics", "search", "fileStorage"],
+  },
+  ai: {
+    label: "منتج ذكاء اصطناعي",
+    features: ["auth", "aiIntegration", "fileStorage", "analytics", "adminPanel"],
+  },
+};
 
 export default function IdeaWizard() {
   const navigate = useNavigate();
@@ -72,12 +95,32 @@ export default function IdeaWizard() {
     onError: (err) => toast.error(err.message || "فشل إنشاء المشروع"),
   });
 
+  const trimmedIdeaLength = idea.trim().length;
+  const canNext1 = name.trim().length >= 2 && trimmedIdeaLength >= 20;
+  const completion = useMemo(() => {
+    const checks = [
+      name.trim().length >= 2,
+      trimmedIdeaLength >= 20,
+      Boolean(audience.trim()),
+      platforms.length > 0,
+      features.length >= 2,
+      Boolean(preferredStack.trim()) || Boolean(constraints.trim()),
+    ];
+
+    return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+  }, [audience, constraints, features.length, name, platforms.length, preferredStack, trimmedIdeaLength]);
+
   const togglePlatform = (p: string) =>
     setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
   const toggleFeature = (f: FeatureKey) =>
     setFeatures((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
 
-  const canNext1 = name.trim().length >= 2 && idea.trim().length >= 20;
+  const appendIdeaPrompt = (prompt: string) => {
+    setIdea((current) => {
+      const prefix = current.trim() ? `${current.trim()}\n` : "";
+      return `${prefix}- ${prompt} `;
+    });
+  };
 
   const submit = () => {
     const config: ProjectConfig = {
@@ -94,79 +137,128 @@ export default function IdeaWizard() {
   };
 
   return (
-    <div className="rounded-2xl border border-border bg-card shadow-2xl shadow-black/30">
-      {/* مؤشر الخطوات */}
-      <div className="flex items-center gap-2 border-b border-border px-6 py-4">
-        {STEPS.map((s, i) => (
-          <div key={s.id} className="flex flex-1 items-center gap-2">
+    <div className="premium-card relative overflow-hidden rounded-3xl">
+      <div className="ambient-orb -right-20 top-16 h-56 w-56" />
+      <div className="ambient-orb -left-24 bottom-10 h-52 w-52 bg-sky-400/10" />
+
+      <div className="relative border-b border-white/10 px-5 py-4 sm:px-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold text-primary">استوديو تحويل الفكرة إلى مواصفة</p>
+            <h2 className="mt-1 text-lg font-bold">معالج ذكي يلتقط التفاصيل التي يحتاجها وكيل البرمجة</h2>
+          </div>
+          <div className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+            اكتمال السياق {completion}%
+          </div>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+          <div className="h-full rounded-full bg-gradient-to-l from-primary to-sky-400 transition-all" style={{ width: `${completion}%` }} />
+        </div>
+      </div>
+
+      <div className="relative grid border-b border-white/10 sm:grid-cols-3">
+        {STEPS.map((s) => {
+          const Icon = s.icon;
+          const active = step === s.id;
+          const completed = step > s.id;
+          return (
             <button
+              key={s.id}
               type="button"
-              onClick={() => s.id < step && setStep(s.id)}
+              onClick={() => (s.id < step || canNext1) && setStep(s.id)}
+              disabled={s.id > 1 && !canNext1}
               className={cn(
-                "flex items-center gap-2 text-sm font-medium transition-colors",
-                step === s.id
-                  ? "text-primary"
-                  : step > s.id
-                    ? "text-foreground"
-                    : "text-muted-foreground",
+                "flex items-center gap-3 px-5 py-4 text-start transition-all disabled:cursor-not-allowed disabled:opacity-50 sm:px-6",
+                active ? "bg-primary/10" : "hover:bg-white/[0.03]",
               )}
+              aria-current={active ? "step" : undefined}
             >
               <span
                 className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold",
-                  step === s.id
-                    ? "border-primary bg-primary/15 text-primary"
-                    : step > s.id
+                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition-all",
+                  active
+                    ? "border-primary bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+                    : completed
                       ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-border",
+                      : "border-border bg-secondary/50 text-muted-foreground",
                 )}
               >
-                {step > s.id ? <Check className="h-3.5 w-3.5" /> : s.id}
+                {completed ? <Check className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
               </span>
-              <span className="hidden sm:inline">{s.title}</span>
+              <span>
+                <span className={cn("block text-sm font-bold", active && "text-primary")}>{s.title}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{s.hint}</span>
+              </span>
             </button>
-            {i < STEPS.length - 1 && <div className="h-px flex-1 bg-border" />}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      <div className="p-6">
+      <div className="relative p-5 sm:p-6">
         {step === 1 && (
-          <div className="space-y-5">
-            <div>
-              <label className="mb-2 block text-sm font-semibold">اسم المشروع</label>
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="مثال: منصّة سوق، مساعد دراسي، نظام حجوزات…"
-                className="h-12 bg-secondary/50 text-base"
-              />
-            </div>
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <label className="text-sm font-semibold">صف فكرتك بحرية</label>
-                <span
-                  className={cn(
-                    "text-xs",
-                    idea.trim().length >= 20 ? "text-primary" : "text-muted-foreground",
-                  )}
-                >
-                  {idea.trim().length} / 20 حرفاً على الأقل
-                </span>
+          <div className="grid gap-5 lg:grid-cols-[1fr_260px]">
+            <div className="space-y-5">
+              <div>
+                <label className="mb-2 block text-sm font-semibold" htmlFor="project-name">
+                  اسم المشروع
+                </label>
+                <Input
+                  id="project-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="مثال: منصّة سوق، مساعد دراسي، نظام حجوزات..."
+                  className="h-12 bg-secondary/50 text-base"
+                  autoComplete="off"
+                />
               </div>
-              <Textarea
-                value={idea}
-                onChange={(e) => setIdea(e.target.value)}
-                rows={7}
-                placeholder="ماذا يفعل التطبيق؟ لمن؟ ما المشكلة التي يحلها؟ اكتب كل ما يدور في ذهنك — كلما زادت التفاصيل، كانت حزمة التوثيق أدق وأعمق…"
-                className="resize-none bg-secondary/50 text-base leading-7"
-              />
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                سيحوّل مِرْوَر هذه الفكرة إلى 9 وثائق هندسية وفق إطار SDLC الجديد: متطلبات، معمارية،
-                AGENTS.md، هندسة سياق، خطة تنفيذ، اختبارات وتقييمات، حواجز وأمان، نشر ومراقبة،
-                وخارطة طريق.
-              </p>
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label className="text-sm font-semibold" htmlFor="project-idea">
+                    صف فكرتك بحرية
+                  </label>
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-xs",
+                      trimmedIdeaLength >= 20
+                        ? "bg-primary/10 text-primary"
+                        : "bg-amber-500/10 text-amber-300",
+                    )}
+                  >
+                    {trimmedIdeaLength} / 20 حرفاً
+                  </span>
+                </div>
+                <Textarea
+                  id="project-idea"
+                  value={idea}
+                  onChange={(e) => setIdea(e.target.value)}
+                  rows={8}
+                  placeholder="ماذا يفعل التطبيق؟ لمن؟ ما المشكلة التي يحلها؟ ما التجربة المثالية؟ كل تفصيلة هنا تتحول لاحقاً إلى متطلبات واختبارات وحواجز أوضح."
+                  className="resize-none bg-secondary/50 text-base leading-7"
+                />
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  كلما كان الوصف أوضح، أصبحت وثائق PRD والمعمارية وAGENTS.md أقرب إلى نية المنتج الحقيقية.
+                </p>
+              </div>
             </div>
+
+            <aside className="rounded-2xl border border-border bg-background/45 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-bold">
+                <WandSparkles className="h-4 w-4 text-primary" />
+                محفزات ذكية
+              </div>
+              <div className="space-y-2">
+                {IDEA_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => appendIdeaPrompt(prompt)}
+                    className="w-full rounded-xl border border-border bg-secondary/30 px-3 py-2 text-start text-xs leading-5 text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </aside>
           </div>
         )}
 
@@ -174,7 +266,7 @@ export default function IdeaWizard() {
           <div className="space-y-6">
             <div>
               <label className="mb-3 block text-sm font-semibold">نوع التطبيق</label>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                 {(Object.keys(APP_TYPE_LABELS) as AppType[]).map((key) => {
                   const Icon = APP_TYPE_ICONS[key];
                   return (
@@ -182,14 +274,15 @@ export default function IdeaWizard() {
                       key={key}
                       type="button"
                       onClick={() => setAppType(key)}
+                      aria-pressed={appType === key}
                       className={cn(
-                        "flex items-center gap-2 rounded-xl border px-3 py-3 text-sm font-medium transition-all",
+                        "group flex min-h-20 flex-col items-start justify-between rounded-2xl border px-3 py-3 text-sm font-medium transition-all",
                         appType === key
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                          ? "border-primary bg-primary/10 text-primary shadow-lg shadow-primary/5"
+                          : "border-border bg-secondary/35 text-muted-foreground hover:border-primary/40 hover:text-foreground",
                       )}
                     >
-                      <Icon className="h-4 w-4 shrink-0" />
+                      <Icon className="h-5 w-5 transition-transform group-hover:scale-110" />
                       {APP_TYPE_LABELS[key].ar}
                     </button>
                   );
@@ -197,55 +290,64 @@ export default function IdeaWizard() {
               </div>
             </div>
 
-            <div>
-              <label className="mb-3 block text-sm font-semibold">النطاق المستهدف</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(Object.keys(SCALE_LABELS) as Scale[]).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setScale(key)}
-                    className={cn(
-                      "rounded-xl border px-3 py-3 text-sm font-medium transition-all",
-                      scale === key
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40 hover:text-foreground",
-                    )}
-                  >
-                    {SCALE_LABELS[key]}
-                  </button>
-                ))}
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div>
+                <label className="mb-3 block text-sm font-semibold">النطاق المستهدف</label>
+                <div className="grid gap-2">
+                  {(Object.keys(SCALE_LABELS) as Scale[]).map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setScale(key)}
+                      aria-pressed={scale === key}
+                      className={cn(
+                        "rounded-2xl border px-4 py-3 text-start text-sm font-medium transition-all",
+                        scale === key
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-secondary/35 text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                      )}
+                    >
+                      {SCALE_LABELS[key]}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-semibold">الجمهور المستهدف</label>
-              <Input
-                value={audience}
-                onChange={(e) => setAudience(e.target.value)}
-                placeholder="مثال: أصحاب المتاجر الصغيرة، طلاب الجامعات…"
-                className="bg-secondary/50"
-              />
-            </div>
+              <div className="space-y-5">
+                <div>
+                  <label className="mb-2 block text-sm font-semibold" htmlFor="project-audience">
+                    الجمهور المستهدف
+                  </label>
+                  <Input
+                    id="project-audience"
+                    value={audience}
+                    onChange={(e) => setAudience(e.target.value)}
+                    placeholder="مثال: أصحاب المتاجر الصغيرة، طلاب الجامعات..."
+                    className="bg-secondary/50"
+                  />
+                </div>
 
-            <div>
-              <label className="mb-3 block text-sm font-semibold">المنصات</label>
-              <div className="flex flex-wrap gap-2">
-                {PLATFORMS.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => togglePlatform(p)}
-                    className={cn(
-                      "rounded-full border px-4 py-1.5 text-sm transition-all",
-                      platforms.includes(p)
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-secondary/40 text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {p}
-                  </button>
-                ))}
+                <div>
+                  <label className="mb-3 block text-sm font-semibold">المنصات</label>
+                  <div className="flex flex-wrap gap-2">
+                    {PLATFORMS.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => togglePlatform(p)}
+                        aria-pressed={platforms.includes(p)}
+                        className={cn(
+                          "rounded-full border px-4 py-1.5 text-sm transition-all",
+                          platforms.includes(p)
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border bg-secondary/40 text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -254,13 +356,28 @@ export default function IdeaWizard() {
         {step === 3 && (
           <div className="space-y-6">
             <div>
-              <label className="mb-3 block text-sm font-semibold">القدرات الأساسية</label>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <label className="text-sm font-semibold">القدرات الأساسية</label>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(FEATURE_PRESETS).map(([key, preset]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setFeatures(preset.features)}
+                      className="rounded-full border border-border bg-secondary/30 px-3 py-1 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {(Object.keys(FEATURE_LABELS) as FeatureKey[]).map((key) => (
                   <button
                     key={key}
                     type="button"
                     onClick={() => toggleFeature(key)}
+                    aria-pressed={features.includes(key)}
                     className={cn(
                       "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-all",
                       features.includes(key)
@@ -271,7 +388,9 @@ export default function IdeaWizard() {
                     <span
                       className={cn(
                         "flex h-4 w-4 items-center justify-center rounded border",
-                        features.includes(key) ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40",
+                        features.includes(key)
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-muted-foreground/40",
                       )}
                     >
                       {features.includes(key) && <Check className="h-3 w-3" />}
@@ -282,61 +401,68 @@ export default function IdeaWizard() {
               </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-semibold">
-                قيود أو ملاحظات <span className="font-normal text-muted-foreground">(اختياري)</span>
-              </label>
-              <Textarea
-                value={constraints}
-                onChange={(e) => setConstraints(e.target.value)}
-                rows={2}
-                placeholder="مثال: ميزانية محدودة، يجب العمل دون اتصال، التزام بمعايير معينة…"
-                className="resize-none bg-secondary/50"
-              />
-            </div>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-semibold" htmlFor="project-constraints">
+                  قيود أو ملاحظات <span className="font-normal text-muted-foreground">(اختياري)</span>
+                </label>
+                <Textarea
+                  id="project-constraints"
+                  value={constraints}
+                  onChange={(e) => setConstraints(e.target.value)}
+                  rows={4}
+                  placeholder="مثال: ميزانية محدودة، يجب العمل دون اتصال، التزام بمعايير معينة..."
+                  className="resize-none bg-secondary/50"
+                />
+              </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-semibold">
-                مكدس تقني مفضل <span className="font-normal text-muted-foreground">(اختياري)</span>
-              </label>
-              <Input
-                value={preferredStack}
-                onChange={(e) => setPreferredStack(e.target.value)}
-                placeholder="مثال: Next.js + Supabase — اتركه فارغاً ليقترح مِرْوَر الأنسب"
-                className="bg-secondary/50"
-              />
-            </div>
+              <div className="space-y-5">
+                <div>
+                  <label className="mb-2 block text-sm font-semibold" htmlFor="preferred-stack">
+                    مكدس تقني مفضل <span className="font-normal text-muted-foreground">(اختياري)</span>
+                  </label>
+                  <Input
+                    id="preferred-stack"
+                    value={preferredStack}
+                    onChange={(e) => setPreferredStack(e.target.value)}
+                    placeholder="مثال: Next.js + Supabase — اتركه فارغاً ليقترح مِرْوَر الأنسب"
+                    className="bg-secondary/50"
+                  />
+                </div>
 
-            <div>
-              <label className="mb-3 block text-sm font-semibold">لغة الوثائق</label>
-              <div className="grid grid-cols-2 gap-2">
-                {(
-                  [
-                    { v: "ar", label: "العربية" },
-                    { v: "en", label: "English" },
-                  ] as const
-                ).map(({ v, label }) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setDocLanguage(v)}
-                    className={cn(
-                      "rounded-xl border px-3 py-2.5 text-sm font-medium transition-all",
-                      docLanguage === v
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-secondary/40 text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
+                <div>
+                  <label className="mb-3 block text-sm font-semibold">لغة الوثائق</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(
+                      [
+                        { v: "ar", label: "العربية" },
+                        { v: "en", label: "English" },
+                      ] as const
+                    ).map(({ v, label }) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setDocLanguage(v)}
+                        aria-pressed={docLanguage === v}
+                        className={cn(
+                          "rounded-xl border px-3 py-2.5 text-sm font-medium transition-all",
+                          docLanguage === v
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border bg-secondary/40 text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-border px-6 py-4">
+      <div className="relative flex items-center justify-between gap-3 border-t border-white/10 px-5 py-4 sm:px-6">
         <Button
           variant="ghost"
           onClick={() => setStep((s) => Math.max(1, s - 1))}
@@ -347,26 +473,22 @@ export default function IdeaWizard() {
           السابق
         </Button>
 
+        <div className="hidden text-xs text-muted-foreground sm:block">
+          {step === 1 && !canNext1 ? "أضف اسماً ووصفاً أوضح للمتابعة" : "جاهز للخطوة التالية"}
+        </div>
+
         {step < 3 ? (
-          <Button
-            onClick={() => setStep((s) => s + 1)}
-            disabled={step === 1 && !canNext1}
-            className="gap-2"
-          >
+          <Button onClick={() => setStep((s) => s + 1)} disabled={step === 1 && !canNext1} className="gap-2">
             التالي
             <ArrowLeft className="h-4 w-4" />
           </Button>
         ) : (
           <Button
             onClick={submit}
-            disabled={createMutation.isPending || !canNext1}
-            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+            disabled={createMutation.isPending || !canNext1 || !platforms.length || !features.length}
+            className="gap-2 bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:bg-primary/90"
           >
-            {createMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
+            {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             ولّد حزمة التوثيق
           </Button>
         )}

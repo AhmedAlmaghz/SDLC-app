@@ -65,7 +65,7 @@ export default function ProjectDetail() {
     onError: () => toast.error("تعذّرت إعادة التوليد"),
   });
 
-  const docs = project?.docs ?? [];
+  const docs = useMemo(() => project?.docs ?? [], [project?.docs]);
   const activeKey = selectedKey ?? docs[0]?.key ?? null;
   const activeDoc = useMemo(
     () => docs.find((d) => d.key === activeKey) ?? null,
@@ -75,6 +75,7 @@ export default function ProjectDetail() {
 
   const totalInput = project?.metrics.reduce((s, m) => s + (m.inputTokens ?? 0), 0) ?? 0;
   const totalOutput = project?.metrics.reduce((s, m) => s + (m.outputTokens ?? 0), 0) ?? 0;
+  const completedDocs = useMemo(() => new Set(docs.map((doc) => doc.key)), [docs]);
 
   if (!project) {
     return (
@@ -133,79 +134,94 @@ export default function ProjectDetail() {
           <ArrowRight className="h-4 w-4" />
           مشاريعي
         </Link>
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="truncate text-2xl font-bold">{project.name}</h1>
-            <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">{project.idea}</p>
+        <div className="rounded-3xl border border-white/10 bg-card/60 p-5 backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="min-w-0">
+              <h1 className="truncate text-2xl font-bold">{project.name}</h1>
+              <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">{project.idea}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => setShowMetrics((v) => !v)}
+              >
+                <Gauge className="h-4 w-4" />
+                المقاييس
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                disabled={project.status === "generating" || regenerateAll.isPending}
+                onClick={() => {
+                  if (confirm("إعادة توليد كل الوثائق؟ ستُستبدل المحتويات الحالية."))
+                    regenerateAll.mutate({ id });
+                }}
+              >
+                <RefreshCw className="h-4 w-4" />
+                إعادة التوليد
+              </Button>
+              <Button
+                size="sm"
+                className="gap-2"
+                onClick={downloadZip}
+                disabled={!docs.length || zipping}
+              >
+                {zipping ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileArchive className="h-4 w-4" />
+                )}
+                تصدير ZIP
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() => setShowMetrics((v) => !v)}
-            >
-              <Gauge className="h-4 w-4" />
-              المقاييس
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              disabled={project.status === "generating" || regenerateAll.isPending}
-              onClick={() => {
-                if (confirm("إعادة توليد كل الوثائق؟ ستُستبدل المحتويات الحالية."))
-                  regenerateAll.mutate({ id });
-              }}
-            >
-              <RefreshCw className="h-4 w-4" />
-              إعادة التوليد
-            </Button>
-            <Button
-              size="sm"
-              className="gap-2"
-              onClick={downloadZip}
-              disabled={!docs.length || zipping}
-            >
-              {zipping ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileArchive className="h-4 w-4" />
-              )}
-              تصدير ZIP
-            </Button>
-          </div>
-        </div>
 
-        {/* شريط التقدم */}
-        {project.status === "generating" && (
-          <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-            <div className="mb-2 flex items-center justify-between text-sm">
-              <span className="flex items-center gap-2 font-medium text-amber-400">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                يجري توليد حزمة التوثيق… {project.docsCount}/{project.totalDocs}
-              </span>
-              <span className="font-mono text-xs text-muted-foreground">{progress}%</span>
-            </div>
-            <Progress value={progress} className="h-2" />
+          <div className="mt-5 grid gap-2 sm:grid-cols-3">
+            {[
+              { label: "الوثائق", value: `${project.docsCount}/${project.totalDocs}` },
+              { label: "لغة الحزمة", value: project.docLanguage === "ar" ? "العربية" : "English" },
+              { label: "المصدر", value: docs.some((doc) => doc.source === "ai") ? "AI + Harness" : "Template Engine" },
+            ].map((item) => (
+              <div key={item.label} className="rounded-2xl border border-border bg-background/50 px-4 py-3">
+                <p className="text-xs text-muted-foreground">{item.label}</p>
+                <p className="mt-1 font-semibold">{item.value}</p>
+              </div>
+            ))}
           </div>
-        )}
-        {project.status === "failed" && (
-          <div className="mt-5 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-red-300">
-            <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
-            <div className="space-y-2">
-              <p>
-                تعذّر إكمال التوليد ({project.docsCount}/{project.totalDocs} وثيقة). لم يتم استبدال فشل مزوّد
-                الذكاء الاصطناعي بقوالب صامتة.
-              </p>
-              {project.metrics.find((m) => m.status === "error")?.detail && (
-                <pre dir="ltr" className="whitespace-pre-wrap rounded-lg bg-background/70 p-3 font-mono text-xs text-red-200">
-                  {project.metrics.find((m) => m.status === "error")?.detail}
-                </pre>
-              )}
+
+          {/* شريط التقدم */}
+          {project.status === "generating" && (
+            <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+              <div className="mb-2 flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2 font-medium text-amber-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  يجري توليد حزمة التوثيق… {project.docsCount}/{project.totalDocs}
+                </span>
+                <span className="font-mono text-xs text-muted-foreground">{progress}%</span>
+              </div>
+              <Progress value={progress} className="h-2" />
             </div>
-          </div>
-        )}
+          )}
+          {project.status === "failed" && (
+            <div className="mt-5 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-red-300">
+              <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="space-y-2">
+                <p>
+                  تعذّر إكمال التوليد ({project.docsCount}/{project.totalDocs} وثيقة). لم يتم استبدال فشل مزوّد
+                  الذكاء الاصطناعي بقوالب صامتة.
+                </p>
+                {project.metrics.find((m) => m.status === "error")?.detail && (
+                  <pre dir="ltr" className="whitespace-pre-wrap rounded-lg bg-background/70 p-3 font-mono text-xs text-red-200">
+                    {project.metrics.find((m) => m.status === "error")?.detail}
+                  </pre>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* المقاييس — مراقبة الـ Harness */}
@@ -277,56 +293,76 @@ export default function ProjectDetail() {
 
       {/* المحتوى: قائمة الوثائق + العارض */}
       <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-        <aside className="space-y-1.5 lg:sticky lg:top-24 lg:self-start">
-          {DOC_DEFINITIONS.map((def) => {
-            const doc = docs.find((d) => d.key === def.key);
-            const active = activeKey === def.key;
-            return (
-              <button
-                key={def.key}
-                type="button"
-                onClick={() => doc && setSelectedKey(def.key)}
-                disabled={!doc}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-start transition-all",
-                  active
-                    ? "border-primary/50 bg-primary/10"
-                    : doc
-                      ? "border-border bg-card hover:border-primary/30"
-                      : "border-dashed border-border bg-transparent opacity-50",
-                )}
-              >
-                <FileText
-                  className={cn("h-4 w-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
+        <aside className="space-y-3 lg:sticky lg:top-24 lg:self-start">
+          <div className="rounded-2xl border border-border bg-card/70 p-4">
+            <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
+              <span>خريطة الحزمة</span>
+              <span className="font-mono">{progress}%</span>
+            </div>
+            <div className="grid grid-cols-9 gap-1" aria-label="تقدم وثائق الحزمة">
+              {DOC_DEFINITIONS.map((def) => (
+                <span
+                  key={def.key}
+                  className={cn(
+                    "h-2 rounded-full",
+                    completedDocs.has(def.key) ? "bg-primary" : "bg-secondary",
+                  )}
+                  title={def.titleAr}
                 />
-                <span className="min-w-0 flex-1">
-                  <span className={cn("block truncate text-sm font-semibold", active && "text-primary")}>
-                    {project.docLanguage === "ar" ? def.titleAr : def.titleEn}
-                  </span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    {def.phaseAr}
-                  </span>
-                </span>
-                {doc ? (
-                  <span
-                    className={cn(
-                      "h-2 w-2 shrink-0 rounded-full",
-                      doc.source === "ai" ? "bg-primary" : doc.source === "ai-fallback" ? "bg-amber-400" : "bg-sky-400",
-                    )}
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {DOC_DEFINITIONS.map((def) => {
+              const doc = docs.find((d) => d.key === def.key);
+              const active = activeKey === def.key;
+              return (
+                <button
+                  key={def.key}
+                  type="button"
+                  onClick={() => doc && setSelectedKey(def.key)}
+                  disabled={!doc}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-start transition-all",
+                    active
+                      ? "border-primary/50 bg-primary/10"
+                      : doc
+                        ? "border-border bg-card hover:border-primary/30"
+                        : "border-dashed border-border bg-transparent opacity-50",
+                  )}
+                >
+                  <FileText
+                    className={cn("h-4 w-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
                   />
-                ) : (
-                  project.status === "generating" && (
-                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                  )
-                )}
-              </button>
-            );
-          })}
+                  <span className="min-w-0 flex-1">
+                    <span className={cn("block truncate text-sm font-semibold", active && "text-primary")}>
+                      {project.docLanguage === "ar" ? def.titleAr : def.titleEn}
+                    </span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {def.phaseAr}
+                    </span>
+                  </span>
+                  {doc ? (
+                    <span
+                      className={cn(
+                        "h-2 w-2 shrink-0 rounded-full",
+                        doc.source === "ai" ? "bg-primary" : doc.source === "ai-fallback" ? "bg-amber-400" : "bg-sky-400",
+                      )}
+                    />
+                  ) : (
+                    project.status === "generating" && (
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                    )
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </aside>
 
         <section className="min-w-0">
           {activeDoc ? (
-            <div className="rounded-2xl border border-border bg-card">
+            <div className="rounded-3xl border border-border bg-card/85 shadow-2xl shadow-black/20 backdrop-blur">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
                 <div className="flex items-center gap-3">
                   <h2 className="font-bold">{activeDoc.title}</h2>
@@ -370,7 +406,7 @@ export default function ProjectDetail() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-32 text-center">
+            <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card/40 py-32 text-center">
               <Loader2 className="mb-4 h-10 w-10 animate-spin text-primary/60" />
               <p className="font-semibold">تُبنى الوثائق الآن…</p>
               <p className="mt-1 text-sm text-muted-foreground">

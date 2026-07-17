@@ -1,7 +1,7 @@
 {
   "name": "SDLC-app",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Ahmed Almaghz",
   "license": "MIT",
   "homepage": "https://github.com/AhmedAlmaghz/SDLC-app",
@@ -27,7 +27,7 @@
     "db:push:pg": "drizzle-kit push --config=drizzle.config.pg.ts"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^2.0.61",
+    "@ai-sdk/openai": "^4.0.16",
     "@hono/node-server": "^1.14.3",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
@@ -60,7 +60,7 @@
     "@trpc/client": "^11.8.1",
     "@trpc/react-query": "^11.8.1",
     "@trpc/server": "^11.8.1",
-    "ai": "^6.0.229",
+    "ai": "^7.0.31",
     "better-sqlite3": "^12.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

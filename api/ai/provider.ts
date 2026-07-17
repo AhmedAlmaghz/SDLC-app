@@ -1,4 +1,4 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createOpenAI } from "@ai-sdk/openai";
 import { eq } from "drizzle-orm";
 import { env } from "../lib/env";
 import { getDb } from "../queries/connection";
@@ -84,11 +84,11 @@ export function getModel(complexity: "high" | "standard") {
   if (!cfg.configured) {
     throw new Error("AI provider is not configured");
   }
-  const provider = createOpenAICompatible({
+  const provider = createOpenAI({
     name: "openai-compatible",
     baseURL: cfg.baseUrl,
     apiKey: cfg.apiKey,
   });
   const modelId = complexity === "high" ? cfg.model : cfg.smallModel || cfg.model;
-  return { model: provider.chatModel(modelId), modelId };
+  return { model: provider.chat(modelId), modelId };
 }

@@ -10,7 +10,8 @@ import { getModel, resolveAiConfig } from "./provider";
 
 /**
  * منسّق التوليد — «نموذج المصنع» عملياً:
- * مواصفات → توليد عبر AI SDK → قياس (رموز/زمن/نموذج) → احتياط حتمي عند الفشل.
+ * مواصفات → توليد عبر AI SDK → قياس (رموز/زمن/نموذج).
+ * يستخدم القوالب فقط عند عدم ضبط مفتاح AI؛ أما فشل المزود فيفشل بوضوح.
  * يعمل كمهمة خلفية غير متزامنة، والواجهة تستطلع الحالة (Orchestrator pattern).
  */
 
@@ -46,6 +47,11 @@ function recordRun(entry: {
       detail: entry.detail ?? null,
     })
     .run();
+}
+
+function formatAiError(err: unknown): string {
+  if (err instanceof Error) return err.message.slice(0, 500);
+  return String(err).slice(0, 500);
 }
 
 function upsertDoc(entry: {
@@ -103,6 +109,7 @@ async function generateOneDoc(
   const cfg = resolveAiConfig();
 
   if (cfg.configured) {
+    const selectedModelId = def.complexity === "high" ? cfg.model : cfg.smallModel || cfg.model;
     try {
       const { model, modelId } = getModel(def.complexity);
       const result = await generateText({
@@ -116,7 +123,7 @@ async function generateOneDoc(
         projectId,
         docKey: def.key,
         kind: "doc",
-        model: modelId,
+        model: `${cfg.provider}:${modelId}`,
         inputTokens: result.usage?.inputTokens ?? null,
         outputTokens: result.usage?.outputTokens ?? null,
         durationMs,
@@ -130,30 +137,21 @@ async function generateOneDoc(
         fileName: def.fileName,
         content: result.text.trim(),
         source: "ai" as const,
-        model: modelId,
+        model: `${cfg.provider}:${modelId}`,
       };
     } catch (err) {
       const durationMs = Date.now() - started;
+      const message = formatAiError(err);
       recordRun({
         projectId,
         docKey: def.key,
         kind: "doc",
-        model: cfg.model,
+        model: `${cfg.provider}:${selectedModelId}`,
         durationMs,
         status: "error",
-        detail: `ai failed → template fallback: ${err instanceof Error ? err.message.slice(0, 300) : String(err)}`,
+        detail: `AI provider failed; generation stopped: ${message}`,
       });
-      // السقوط إلى القوالب — النظام لا يفشل، بل يتحلل بأناقة
-      const tpl = generateFromTemplate(def.key, name, idea, config);
-      return {
-        projectId,
-        key: def.key,
-        title: tpl.title,
-        fileName: tpl.fileName,
-        content: tpl.content,
-        source: "ai-fallback" as const,
-        model: null,
-      };
+      throw new Error(`AI provider ${cfg.providerLabel} failed for ${def.key} using model ${selectedModelId}: ${message}`);
     }
   }
 

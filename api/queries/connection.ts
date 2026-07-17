@@ -70,6 +70,7 @@ function ensureSqliteSchema(sqlite: BetterSqlite3.Database) {
     CREATE INDEX IF NOT EXISTS runs_project_idx ON runs(project_id);
     CREATE TABLE IF NOT EXISTS settings (
       id TEXT PRIMARY KEY,
+      ai_provider TEXT NOT NULL DEFAULT 'custom',
       ai_base_url TEXT NOT NULL DEFAULT '',
       ai_api_key TEXT NOT NULL DEFAULT '',
       ai_model TEXT NOT NULL DEFAULT '',
@@ -77,6 +78,11 @@ function ensureSqliteSchema(sqlite: BetterSqlite3.Database) {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+
+  const settingColumns = sqlite.prepare("PRAGMA table_info(settings)").all() as Array<{ name: string }>;
+  if (!settingColumns.some((column) => column.name === "ai_provider")) {
+    sqlite.exec("ALTER TABLE settings ADD COLUMN ai_provider TEXT NOT NULL DEFAULT 'custom';");
+  }
 }
 
 export function getDb(): Db {

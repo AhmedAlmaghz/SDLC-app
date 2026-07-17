@@ -16,10 +16,11 @@ export const env = {
   sqlitePath: optional("SQLITE_PATH", "./data/mirwr.db"),
 
   /**
-   * مزوّد الذكاء الاصطناعي (Vercel AI SDK — متوافق مع OpenAI).
+   * مزوّد الذكاء الاصطناعي (Vercel AI SDK).
    * يمكن أيضاً ضبطها من صفحة الإعدادات وتُخزَّن في قاعدة البيانات،
    * ومتغيرات البيئة تُستخدم كقيم افتراضية.
    */
+  aiProvider: optional("AI_PROVIDER", "custom"),
   aiBaseUrl: optional("AI_BASE_URL", "https://api.moonshot.ai/v1"),
   aiApiKey: optional("AI_API_KEY"),
   aiModel: optional("AI_MODEL", "kimi-k2-0905-preview"),

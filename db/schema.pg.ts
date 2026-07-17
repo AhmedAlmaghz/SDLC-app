@@ -48,6 +48,7 @@ export const runs = pgTable("runs", {
 
 export const settings = pgTable("settings", {
   id: text("id").primaryKey(),
+  aiProvider: text("ai_provider").notNull().default("custom"),
   aiBaseUrl: text("ai_base_url").notNull().default(""),
   aiApiKey: text("ai_api_key").notNull().default(""),
   aiModel: text("ai_model").notNull().default(""),

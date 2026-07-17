@@ -1,22 +1,38 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BrainCircuit, CheckCircle2, Info, KeyRound, Loader2, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+type AiProviderId = "openai-compatible" | "anthropic" | "gemini" | "openrouter" | "groq" | "mistral";
 
 export default function Settings() {
   const utils = trpc.useUtils();
   const { data, isLoading } = trpc.settings.getAi.useQuery();
 
+  const [provider, setProvider] = useState<AiProviderId>("openai-compatible");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [smallModel, setSmallModel] = useState("");
 
+  const selectedProvider = useMemo(
+    () => data?.providers.find((item) => item.id === provider),
+    [data?.providers, provider],
+  );
+
   useEffect(() => {
     if (data) {
+      setProvider(data.provider);
       setBaseUrl(data.baseUrl);
       setModel(data.model);
       setSmallModel(data.smallModel);
@@ -39,6 +55,15 @@ export default function Settings() {
     },
   });
 
+  function applyProviderDefaults(nextProvider: AiProviderId) {
+    const defaults = data?.providers.find((item) => item.id === nextProvider);
+    setProvider(nextProvider);
+    if (!defaults) return;
+    setBaseUrl(defaults.baseUrl);
+    setModel(defaults.model);
+    setSmallModel(defaults.smallModel);
+  }
+
   if (isLoading || !data) {
     return (
       <div className="flex justify-center py-32">
@@ -52,7 +77,7 @@ export default function Settings() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold">الإعدادات</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          ربط نماذج الذكاء الاصطناعي عبر Vercel AI SDK — أي مزوّد متوافق مع OpenAI
+          اختر مزوّد الذكاء الاصطناعي، النموذج، ومفتاح API الخاص به دون كشف الأسرار المخزنة
         </p>
       </div>
 
@@ -74,22 +99,44 @@ export default function Settings() {
                 : "border-0 bg-amber-500/15 text-amber-400"
             }
           >
-            {data.configured ? "مُفعّل" : "وضع القوالب"}
+            {data.configured ? `مُفعّل: ${data.providerLabel}` : "وضع القوالب"}
           </Badge>
         </div>
 
         <div className="space-y-5 p-6">
+          <div>
+            <label className="mb-2 block text-sm font-semibold">المزوّد</label>
+            <Select value={provider} onValueChange={(value) => applyProviderDefaults(value as AiProviderId)}>
+              <SelectTrigger className="w-full bg-secondary/50">
+                <SelectValue placeholder="اختر المزوّد" />
+              </SelectTrigger>
+              <SelectContent>
+                {data.providers.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {selectedProvider?.helpText ?? "اختر مزوداً لعرض الإعدادات الافتراضية المناسبة."}
+            </p>
+          </div>
+
           <div>
             <label className="mb-2 block text-sm font-semibold">عنوان نقطة النهاية (Base URL)</label>
             <Input
               dir="ltr"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.moonshot.ai/v1"
-              className="bg-secondary/50 font-mono text-sm"
+              placeholder={selectedProvider?.baseUrl ?? "https://api.example.com/v1"}
+              disabled={!selectedProvider?.requiresBaseUrl}
+              className="bg-secondary/50 font-mono text-sm disabled:opacity-70"
             />
             <p className="mt-1.5 text-xs text-muted-foreground">
-              Moonshot: api.moonshot.ai/v1 — OpenAI: api.openai.com/v1 — أو أي مزوّد متوافق
+              {selectedProvider?.requiresBaseUrl
+                ? "مطلوب للمزوّدات المتوافقة مع OpenAI مثل OpenCode Go أو OpenCode أو Moonshot أو OpenAI."
+                : "يُستخدم الافتراضي الرسمي لهذا المزوّد؛ غيّر المزوّد لتحديثه تلقائياً."}
             </p>
           </div>
 
@@ -115,7 +162,7 @@ export default function Settings() {
                 dir="ltr"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="kimi-k2-0905-preview"
+                placeholder={selectedProvider?.model ?? "model-name"}
                 className="bg-secondary/50 font-mono text-sm"
               />
               <p className="mt-1.5 text-xs text-muted-foreground">
@@ -128,7 +175,7 @@ export default function Settings() {
                 dir="ltr"
                 value={smallModel}
                 onChange={(e) => setSmallModel(e.target.value)}
-                placeholder="نموذج أسرع وأرخص"
+                placeholder={selectedProvider?.smallModel ?? "نموذج أسرع وأرخص"}
                 className="bg-secondary/50 font-mono text-sm"
               />
               <p className="mt-1.5 text-xs text-muted-foreground">
@@ -140,9 +187,9 @@ export default function Settings() {
           <div className="flex items-start gap-3 rounded-xl border border-border bg-secondary/40 p-4 text-xs leading-6 text-muted-foreground">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <p>
-              دون مفتاح، يعمل مِرْوَر بمحرك قوالب هندسي مدمج يولّد الحزمة كاملة بجودة عالية. مع
-              المفتاح، تُولَّد الوثائق بالذكاء الاصطناعي مع تسجيل استهلاك الرموز والزمن لكل وثيقة —
-              وعند أي فشل في المزوّد يسقط التوليد تلقائياً إلى القوالب دون أن تفقد شيئاً.
+              دون مفتاح، يعمل مِرْوَر بمحرك قوالب هندسي مدمج. مع المفتاح، يجب أن تنجح الوثائق عبر
+              مزوّد الذكاء الاصطناعي الحقيقي؛ إذا رفض المزود الطلب أو كان النموذج غير صحيح، يفشل
+              التوليد بوضوح وتظهر التفاصيل في صفحة المشروع بدلاً من السقوط الصامت إلى القوالب.
             </p>
           </div>
         </div>
@@ -161,6 +208,7 @@ export default function Settings() {
             className="gap-2"
             onClick={() =>
               saveMutation.mutate({
+                provider,
                 baseUrl: baseUrl.trim(),
                 apiKey: apiKey.trim() || undefined,
                 model: model.trim(),

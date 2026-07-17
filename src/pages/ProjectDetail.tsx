@@ -191,12 +191,19 @@ export default function ProjectDetail() {
           </div>
         )}
         {project.status === "failed" && (
-          <div className="mt-5 flex items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-red-300">
-            <TriangleAlert className="h-5 w-5 shrink-0" />
-            <p>
-              تعذّر إكمال التوليد ({project.docsCount}/{project.totalDocs} وثيقة فقط). أعد المحاولة
-              بزر «إعادة التوليد» — غالباً يحلّها مزوّد AI مضبوط في الإعدادات.
-            </p>
+          <div className="mt-5 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-red-300">
+            <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
+            <div className="space-y-2">
+              <p>
+                تعذّر إكمال التوليد ({project.docsCount}/{project.totalDocs} وثيقة). لم يتم استبدال فشل مزوّد
+                الذكاء الاصطناعي بقوالب صامتة.
+              </p>
+              {project.metrics.find((m) => m.status === "error")?.detail && (
+                <pre dir="ltr" className="whitespace-pre-wrap rounded-lg bg-background/70 p-3 font-mono text-xs text-red-200">
+                  {project.metrics.find((m) => m.status === "error")?.detail}
+                </pre>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -227,6 +234,7 @@ export default function ProjectDetail() {
                   <th className="px-3 py-2 text-start font-medium">الرموز (د/خ)</th>
                   <th className="px-3 py-2 text-start font-medium">الزمن</th>
                   <th className="px-3 py-2 text-start font-medium">الحالة</th>
+                  <th className="px-3 py-2 text-start font-medium">التفاصيل</th>
                 </tr>
               </thead>
               <tbody>
@@ -253,6 +261,11 @@ export default function ProjectDetail() {
                         >
                           {m.status === "ok" ? "ناجح" : "خطأ"}
                         </Badge>
+                      </td>
+                      <td className="max-w-[360px] px-3 py-2 font-mono text-xs text-muted-foreground">
+                        <span dir="ltr" className="line-clamp-3 whitespace-pre-wrap">
+                          {m.detail ?? "—"}
+                        </span>
                       </td>
                     </tr>
                   ))}

@@ -15,7 +15,7 @@ import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { documents, projects, runs } from "@db/schema";
 import { isGenerating, regenerateSingleDoc, runGeneration } from "../ai/generator";
-import { maskKey, resolveAiConfig, saveAiConfig } from "../ai/provider";
+import { AI_PROVIDER_DEFINITIONS, AI_PROVIDER_IDS, maskKey, resolveAiConfig, saveAiConfig } from "../ai/provider";
 
 const configSchema = z.object({
   appType: z.enum(["web", "mobile", "api", "desktop", "cli", "aiAgent", "other"]),
@@ -198,28 +198,41 @@ export const settingsRouter = createRouter({
     const cfg = resolveAiConfig();
     return {
       configured: cfg.configured,
+      provider: cfg.provider,
+      providerLabel: cfg.providerLabel,
       baseUrl: cfg.baseUrl,
       model: cfg.model,
       smallModel: cfg.smallModel,
       apiKeyMasked: maskKey(cfg.apiKey),
+      providers: Object.values(AI_PROVIDER_DEFINITIONS).map(({ id, label, baseUrl, requiresBaseUrl, model, smallModel, helpText }) => ({
+        id,
+        label,
+        baseUrl,
+        requiresBaseUrl,
+        model,
+        smallModel,
+        helpText,
+      })),
     };
   }),
 
   saveAi: publicQuery
     .input(
       z.object({
+        provider: z.enum(AI_PROVIDER_IDS),
         baseUrl: z.string().url().max(300),
-        apiKey: z.string().max(300).optional(),
-        model: z.string().min(1).max(120),
-        smallModel: z.string().max(120).default(""),
+        apiKey: z.string().max(500).optional(),
+        model: z.string().min(1).max(160),
+        smallModel: z.string().max(160).default(""),
       }),
     )
     .mutation(({ input }) => {
       saveAiConfig({
+        provider: input.provider,
         baseUrl: input.baseUrl,
         apiKey: input.apiKey?.trim() ? input.apiKey.trim() : undefined,
-        model: input.model,
-        smallModel: input.smallModel,
+        model: input.model.trim(),
+        smallModel: input.smallModel.trim(),
       });
       const cfg = resolveAiConfig();
       return { configured: cfg.configured, apiKeyMasked: maskKey(cfg.apiKey) };

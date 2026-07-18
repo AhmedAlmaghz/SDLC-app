@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router";
-import { Boxes, FolderKanban, Settings, Sparkles, WandSparkles } from "lucide-react";
+import { ArrowUp, Boxes, FolderKanban, Settings, Sparkles, WandSparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -9,11 +10,33 @@ const navItems = [
 ];
 
 export default function Layout() {
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowScrollTop(window.scrollY > 420);
+    };
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    window.scrollTo({
+      top: 0,
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+    });
+  };
+
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden">
+    <div className="relative flex min-h-screen flex-col overflow-x-hidden">
       <div className="ambient-orb right-[-6rem] top-20 h-72 w-72" />
       <div className="ambient-orb bottom-32 left-[-8rem] h-80 w-80 bg-sky-400/10" />
-      <header className="glass sticky top-0 z-40 border-b border-white/10">
+      <header className="glass fixed inset-x-0 top-0 z-50 border-b border-white/10 shadow-2xl shadow-black/20 supports-[backdrop-filter]:bg-background/70">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6">
           <Link to="/" className="group flex items-center gap-3" aria-label="الانتقال إلى الصفحة الرئيسية">
             <span className="relative flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/15 text-primary ring-1 ring-primary/30 transition-transform group-hover:scale-105">
@@ -52,9 +75,25 @@ export default function Layout() {
         </div>
       </header>
 
-      <main className="relative z-10 flex-1">
+      <main className="relative z-10 flex-1 pt-16">
         <Outlet />
       </main>
+
+      <button
+        type="button"
+        aria-label="العودة إلى أعلى الصفحة"
+        aria-hidden={!showScrollTop}
+        tabIndex={showScrollTop ? 0 : -1}
+        onClick={scrollToTop}
+        className={cn(
+          "fixed bottom-6 end-6 z-50 flex h-12 w-12 items-center justify-center rounded-full border border-primary/30 bg-primary text-primary-foreground shadow-2xl shadow-primary/25 ring-offset-background transition-all duration-300 hover:-translate-y-1 hover:shadow-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:translate-y-0 sm:bottom-8 sm:end-8",
+          showScrollTop
+            ? "pointer-events-auto translate-y-0 opacity-100"
+            : "pointer-events-none translate-y-4 opacity-0",
+        )}
+      >
+        <ArrowUp className="h-5 w-5" aria-hidden="true" />
+      </button>
 
       <footer className="relative z-10 border-t border-white/10 py-6">
         <div className="mx-auto flex w-full max-w-7xl flex-col items-center justify-between gap-3 px-4 text-xs text-muted-foreground sm:flex-row sm:px-6">

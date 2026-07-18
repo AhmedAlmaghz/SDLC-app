@@ -42,9 +42,25 @@ function ensureSqliteSchema(sqlite: BetterSqlite3.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
+    CREATE TABLE IF NOT EXISTS package_versions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      version_number INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      change_type TEXT NOT NULL DEFAULT 'initial_generation',
+      change_summary TEXT,
+      created_from_version_number INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      completed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS package_versions_project_idx ON package_versions(project_id);
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      package_version_id TEXT REFERENCES package_versions(id) ON DELETE CASCADE,
+      package_version_number INTEGER NOT NULL DEFAULT 1,
       key TEXT NOT NULL,
       title TEXT NOT NULL,
       file_name TEXT NOT NULL,
@@ -77,7 +93,61 @@ function ensureSqliteSchema(sqlite: BetterSqlite3.Database) {
       ai_small_model TEXT NOT NULL DEFAULT '',
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
+    CREATE TABLE IF NOT EXISTS provider_settings (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      base_url TEXT NOT NULL DEFAULT '',
+      api_key TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      small_model TEXT NOT NULL DEFAULT '',
+      is_active INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS provider_settings_active_idx ON provider_settings(is_active);
   `);
+
+  const packageVersionColumns = sqlite.prepare("PRAGMA table_info(package_versions)").all() as Array<{ name: string }>;
+  const ensurePackageVersionColumn = (name: string, definition: string) => {
+    if (!packageVersionColumns.some((column) => column.name === name)) sqlite.exec(`ALTER TABLE package_versions ADD COLUMN ${definition};`);
+  };
+  ensurePackageVersionColumn("status", "status TEXT NOT NULL DEFAULT 'ready'");
+  ensurePackageVersionColumn("change_type", "change_type TEXT NOT NULL DEFAULT 'initial_generation'");
+  ensurePackageVersionColumn("change_summary", "change_summary TEXT");
+  ensurePackageVersionColumn("created_from_version_number", "created_from_version_number INTEGER");
+  ensurePackageVersionColumn("updated_at", "updated_at INTEGER");
+  ensurePackageVersionColumn("completed_at", "completed_at INTEGER");
+
+  const documentColumns = sqlite.prepare("PRAGMA table_info(documents)").all() as Array<{ name: string }>;
+  if (!documentColumns.some((column) => column.name === "package_version_id")) {
+    sqlite.exec("ALTER TABLE documents ADD COLUMN package_version_id TEXT REFERENCES package_versions(id) ON DELETE CASCADE;");
+  }
+  if (!documentColumns.some((column) => column.name === "package_version_number")) {
+    sqlite.exec("ALTER TABLE documents ADD COLUMN package_version_number INTEGER NOT NULL DEFAULT 1;");
+  }
+  sqlite.exec("CREATE INDEX IF NOT EXISTS documents_project_version_idx ON documents(project_id, package_version_number);");
+
+  const legacyProjects = sqlite
+    .prepare(
+      `SELECT p.id, COALESCE(MIN(d.created_at), p.created_at) AS created_at
+       FROM projects p
+       LEFT JOIN documents d ON d.project_id = p.id
+       WHERE NOT EXISTS (SELECT 1 FROM package_versions pv WHERE pv.project_id = p.id)
+       GROUP BY p.id`,
+    )
+    .all() as Array<{ id: string; created_at: number }>;
+  const insertVersion = sqlite.prepare(
+    "INSERT INTO package_versions (id, project_id, version_number, label, status, change_type, change_summary, created_at, updated_at, completed_at) VALUES (?, ?, 1, 'v1', 'ready', 'initial_generation', 'Initial package version backfilled from existing documents', ?, ?, ?)",
+  );
+  const updateDocs = sqlite.prepare(
+    "UPDATE documents SET package_version_id = ?, package_version_number = 1 WHERE project_id = ? AND package_version_id IS NULL",
+  );
+  for (const project of legacyProjects) {
+    const versionId = `${project.id}:v1`;
+    insertVersion.run(versionId, project.id, project.created_at, project.created_at, project.created_at);
+    updateDocs.run(versionId, project.id);
+  }
 
   const settingColumns = sqlite.prepare("PRAGMA table_info(settings)").all() as Array<{ name: string }>;
   if (!settingColumns.some((column) => column.name === "ai_provider")) {

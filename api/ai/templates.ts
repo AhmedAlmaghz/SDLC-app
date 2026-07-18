@@ -3,6 +3,8 @@ import {
   DOC_DEFINITIONS,
   FEATURE_LABELS,
   SCALE_LABELS,
+  APPLICATION_MODE_LABELS,
+  CODE_AGENT_LABELS,
   type AppType,
   type DocKey,
   type ProjectConfig,
@@ -22,7 +24,10 @@ interface Ctx {
   appTypeLabel: string;
   scaleLabel: string;
   features: string[];
+  applicationModeLabel: string;
+  codeAgentLabel: string;
   stack: { layer: string; choice: string; why: string }[];
+  professionalContext: string[];
 }
 
 function recommendStack(appType: AppType, ar: boolean): Ctx["stack"] {
@@ -63,9 +68,27 @@ function recommendStack(appType: AppType, ar: boolean): Ctx["stack"] {
   }
 }
 
+function professionalContextLines(ctx: { config: ProjectConfig; ar: boolean }): string[] {
+  const c = ctx.config.professionalContext;
+  if (!c) return [];
+  const out: string[] = [];
+  const add = (labelAr: string, labelEn: string, value?: string) => {
+    if (value && value.trim()) out.push(`- ${t(ctx.ar, labelAr, labelEn)}: ${value.trim()}`);
+  };
+  add("سياق التطبيق القائم", "Existing app context", c.existingAppContext);
+  add("قيود التسليم", "Delivery constraints", c.deliveryConstraints);
+  add("أولويات غير وظيفية", "Non-functional priorities", c.nonFunctionalPriorities);
+  add("التكاملات", "Integrations", c.integrations);
+  add("هدف النشر", "Deployment target", c.deploymentTarget);
+  add("ملف الجودة", "Quality profile", c.qualityProfile);
+  add("مقاييس النجاح", "Success metrics", c.successMetrics);
+  add("الأمان والامتثال وحساسية البيانات", "Security / compliance / data sensitivity", c.securityCompliance);
+  return out;
+}
+
 function makeCtx(name: string, idea: string, config: ProjectConfig): Ctx {
   const ar = config.docLanguage === "ar";
-  return {
+  const base: Omit<Ctx, "professionalContext"> = {
     name,
     idea,
     config,
@@ -73,8 +96,15 @@ function makeCtx(name: string, idea: string, config: ProjectConfig): Ctx {
     appTypeLabel: ar ? APP_TYPE_LABELS[config.appType].ar : APP_TYPE_LABELS[config.appType].en,
     scaleLabel: SCALE_LABELS[config.scale],
     features: config.features.map((f) => FEATURE_LABELS[f]),
+    applicationModeLabel: config.applicationMode
+      ? ar
+        ? APPLICATION_MODE_LABELS[config.applicationMode].ar
+        : APPLICATION_MODE_LABELS[config.applicationMode].en
+      : t(ar, "بناء جديد", "New build"),
+    codeAgentLabel: config.preferredCodeAgent ? CODE_AGENT_LABELS[config.preferredCodeAgent] : t(ar, "لا تفضيل", "No preference"),
     stack: recommendStack(config.appType, ar),
   };
+  return { ...base, professionalContext: professionalContextLines({ config, ar }) };
 }
 
 const t = (ar: boolean, a: string, e: string) => (ar ? a : e);
@@ -118,7 +148,9 @@ ${ctx.idea}
 
 - ${t(ctx.ar, "نوع المنتج", "Product type")}: ${ctx.appTypeLabel}
 - ${t(ctx.ar, "الجمهور المستهدف", "Target audience")}: ${ctx.config.audience || t(ctx.ar, "مستخدمون عامون", "General users")}
+- ${t(ctx.ar, "نمط التطبيق", "Application mode")}: ${ctx.applicationModeLabel}
 - ${t(ctx.ar, "النطاق المستهدف", "Target scale")}: ${ctx.scaleLabel}
+${ctx.professionalContext.length ? `\n## ${t(ctx.ar, "السياق الاحترافي", "Professional Context")}\n${ctx.professionalContext.join("\n")}` : ""}
 
 ## 2. ${t(ctx.ar, "الأهداف ومقاييس النجاح", "Goals & Success Metrics")}
 | ${t(ctx.ar, "المقياس", "Metric")} | ${t(ctx.ar, "الهدف", "Target")} | ${t(ctx.ar, "نوعه", "Kind")} |
@@ -173,6 +205,7 @@ flowchart LR
 
 ## 2. ${t(ctx.ar, "المكدس التقني", "Tech Stack")}
 ${stackTable(ctx)}
+${ctx.professionalContext.length ? `\n## ${t(ctx.ar, "السياق الاحترافي والقيود", "Professional Context & Constraints")}\n${ctx.professionalContext.join("\n")}` : ""}
 
 ## 3. ${t(ctx.ar, "المكونات والحدود", "Components & Boundaries")}
 - **${t(ctx.ar, "طبقة العرض", "Presentation")}**: ${t(ctx.ar, "مكونات عديمة المعرفة بالخادم قدر الإمكان، تتواصل عبر عقود tRPC.", "Server-agnostic components communicating via tRPC contracts.")}
@@ -224,6 +257,9 @@ ${t(ctx.ar, "فهارس على مفاتيح الربط والأعمدة المس
 
 ## ${t(ctx.ar, "ملخص المشروع", "Project Summary")}
 ${ctx.name} — ${ctx.appTypeLabel}. ${ctx.idea.split("\n")[0]}
+
+- ${t(ctx.ar, "وكيل البرمجة المفضل", "Preferred code agent")}: ${ctx.codeAgentLabel}
+- ${t(ctx.ar, "نمط التطبيق", "Application mode")}: ${ctx.applicationModeLabel}
 
 ## ${t(ctx.ar, "المكدس والإصدارات", "Stack & Versions")}
 ${stackTable(ctx)}
@@ -325,12 +361,12 @@ ${t(ctx.ar, "ملفات السياق تُراجَع في PRs، وتُؤرخَن 
 | M1 — ${t(ctx.ar, "القدرات", "Capabilities")} | ${t(ctx.ar, "قدرات الفكرة الجوهرية", "Core idea capabilities")} | ${t(ctx.ar, "قصص المستخدم تطابق معايير القبول", "User stories meet acceptance criteria")} |
 | M2 — ${t(ctx.ar, "التصليب", "Hardening")} | ${t(ctx.ar, "الحالات الحدّية، المراقبة، الأداء", "Edge cases, observability, performance")} | ${t(ctx.ar, "بوابات الجودة خضراء", "Quality gates green")} |
 
-## 2. ${t(ctx.ar, "تجزئة المهام بحجم الوكيل", "Agent-Sized Task Decomposition")}
+${ctx.professionalContext.length ? `## ${t(ctx.ar, "السياق الاحترافي الموجِّه", "Guiding Professional Context")}\n${ctx.professionalContext.join("\n")}\n\n` : ""}## 2. ${t(ctx.ar, "تجزئة المهام بحجم الوكيل", "Agent-Sized Task Decomposition")}
 | ${t(ctx.ar, "المعرّف", "ID")} | ${t(ctx.ar, "المهمة", "Task")} | ${t(ctx.ar, "المرحلة", "Milestone")} |
 |---|---|---|
 ${featureTasks(ctx)}
 
-${t(ctx.ar, "**لكل مهمة:** معيار نجاح قابل للتحقق (اختبار يمر)، ووضع موصى به — الموجّه (Conductor) للمنطق الجديد الدقيق، والمنسّق (Orchestrator) للمهام المحددة جيداً التي يمكن تسليمها لوكيل خلفي.", "**Each task:** a verifiable success criterion (a passing test), and a recommended mode — Conductor for tricky novel logic, Orchestrator for well-specified work delegable to a background agent.")}
+${t(ctx.ar, `**لكل مهمة:** معيار نجاح قابل للتحقق (اختبار يمر)، ووضع موصى به — الموجّه (Conductor) للمنطق الجديد الدقيق، والمنسّق (Orchestrator) للمهام المحددة جيداً التي يمكن تسليمها لوكيل خلفي. وكيل البرمجة المفضل: ${ctx.codeAgentLabel}.`, `**Each task:** a verifiable success criterion (a passing test), and a recommended mode — Conductor for tricky novel logic, Orchestrator for well-specified work delegable to a background agent. Preferred code agent: ${ctx.codeAgentLabel}.`)}
 
 ## 3. ${t(ctx.ar, "سجل مشكلة الـ 80%", "The 80% Problem Register")}
 | ${t(ctx.ar, "الموضع المتوقع للخطأ", "Likely failure point")} | ${t(ctx.ar, "التحقق", "Verification")} |

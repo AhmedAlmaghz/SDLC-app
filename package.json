@@ -1,8 +1,10 @@
 {
   "name": "SDLC-app",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "author": "Ahmed Almaghz",
+  "contactEmail": "[ahmedalmaghz@gmail.com]",
+  "contactWhatsApp": "+967777781844",
   "license": "MIT",
   "homepage": "https://github.com/AhmedAlmaghz/SDLC-app",
   "repository": {

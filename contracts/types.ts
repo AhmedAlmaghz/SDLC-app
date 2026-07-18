@@ -145,6 +145,10 @@ export type AppType =
   | "aiAgent"
   | "other";
 
+export type ApplicationMode = "mvp" | "existingApp" | "enterpriseApp" | "newBuild" | "featureExpansion" | "migration";
+
+export type PreferredCodeAgent = "codex" | "claudeCode" | "cursor" | "roo" | "cline" | "githubCopilot" | "windsurf" | "generic" | "other" | "none";
+
 export type Scale = "mvp" | "growth" | "enterprise";
 
 export type FeatureKey =
@@ -163,6 +167,25 @@ export type FeatureKey =
 
 export type DocLanguage = "ar" | "en";
 
+export interface ProfessionalContext {
+  /** سياق التطبيق القائم: المكدس، البنية، نقاط الألم، أو خريطة المستودع */
+  existingAppContext?: string;
+  /** قيود التنفيذ غير القابلة للتفاوض */
+  deliveryConstraints?: string;
+  /** أولويات غير وظيفية مثل الأداء، الاعتمادية، الوصول، القابلية للتوسع */
+  nonFunctionalPriorities?: string;
+  /** تكاملات خارجية أو داخلية مطلوبة */
+  integrations?: string;
+  /** بيئة أو هدف النشر المتوقع */
+  deploymentTarget?: string;
+  /** ملف الجودة المطلوب: سرعة MVP، إنتاج متوازن، أو مؤسسي صارم */
+  qualityProfile?: string;
+  /** مقاييس النجاح التي تثبت أن المنتج/التحديث نجح */
+  successMetrics?: string;
+  /** حساسية البيانات ومتطلبات الأمان والامتثال */
+  securityCompliance?: string;
+}
+
 export interface ProjectConfig {
   appType: AppType;
   audience: string;
@@ -173,6 +196,12 @@ export interface ProjectConfig {
   docLanguage: DocLanguage;
   /** مكدس مفضل اختياري من المستخدم (نص حر) */
   preferredStack: string;
+  /** وكيل البرمجة المفضل لإرشادات AGENTS.md وسير العمل */
+  preferredCodeAgent?: PreferredCodeAgent;
+  /** نمط التطبيق المطلوب حتى تميّز الوثائق بين MVP أو تحديث تطبيق قائم أو تطبيق مؤسسي كامل */
+  applicationMode?: ApplicationMode;
+  /** سياق احترافي إضافي يرفع جودة المواصفات والحواجز وخطة التنفيذ */
+  professionalContext?: ProfessionalContext;
 }
 
 export const APP_TYPE_LABELS: Record<AppType, { ar: string; en: string }> = {
@@ -206,6 +235,28 @@ export const SCALE_LABELS: Record<Scale, string> = {
   enterprise: "مؤسسي واسع النطاق",
 };
 
+export const APPLICATION_MODE_LABELS: Record<ApplicationMode, { ar: string; en: string }> = {
+  mvp: { ar: "منتج أولي MVP", en: "MVP" },
+  existingApp: { ar: "تحديث تطبيق قائم", en: "Update existing app" },
+  enterpriseApp: { ar: "تطبيق احترافي مؤسسي كامل", en: "Full professional enterprise app" },
+  newBuild: { ar: "بناء جديد", en: "New build" },
+  featureExpansion: { ar: "توسيع ميزات", en: "Feature expansion" },
+  migration: { ar: "ترحيل/تحديث", en: "Migration / modernization" },
+};
+
+export const CODE_AGENT_LABELS: Record<PreferredCodeAgent, string> = {
+  codex: "Codex",
+  claudeCode: "Claude Code",
+  cursor: "Cursor",
+  roo: "Roo",
+  cline: "Cline",
+  githubCopilot: "GitHub Copilot",
+  windsurf: "Windsurf",
+  generic: "Generic agent",
+  other: "Other",
+  none: "No preference",
+};
+
 // ---------------------------------------------------------------------------
 // حالات التوليد والكيانات
 // ---------------------------------------------------------------------------
@@ -225,6 +276,23 @@ export interface ProjectSummary {
   updatedAt: Date;
 }
 
+export type PackageChangeType = "initial_generation" | "full_regeneration" | "config_update" | "single_doc_regeneration";
+export type PackageVersionStatus = "queued" | "generating" | "updating" | "ready" | "failed";
+
+export interface PackageVersion {
+  id: string;
+  projectId: string;
+  versionNumber: number;
+  label: string;
+  status: PackageVersionStatus;
+  changeType: PackageChangeType;
+  changeSummary: string | null;
+  createdFromVersionNumber: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
+}
+
 export interface GeneratedDoc {
   id: string;
   projectId: string;
@@ -234,6 +302,8 @@ export interface GeneratedDoc {
   content: string;
   source: DocSource;
   model: string | null;
+  packageVersionId: string | null;
+  packageVersionNumber: number;
   createdAt: Date;
 }
 
@@ -255,6 +325,8 @@ export interface ProjectDetail extends ProjectSummary {
   config: ProjectConfig;
   docs: GeneratedDoc[];
   metrics: RunMetric[];
+  currentVersion: PackageVersion | null;
+  versions: PackageVersion[];
 }
 
 export interface AiSettingsView {
@@ -263,4 +335,58 @@ export interface AiSettingsView {
   model: string;
   smallModel: string;
   apiKeyMasked: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// مزوّدات الذكاء الاصطناعي المسمّاة والمحفوظة
+// ---------------------------------------------------------------------------
+
+/** تعريف مزوّد ثابت (للعرض في الواجهة) */
+export interface AiProviderOption {
+  id: string;
+  label: string;
+  baseUrl: string;
+  requiresBaseUrl: boolean;
+  model: string;
+  smallModel: string;
+  helpText: string;
+}
+
+/** مزوّد محفوظ باسم — يُرجع من الـ API (المفتاح مُقنّع) */
+export interface SavedProvider {
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  smallModel: string;
+  apiKeyMasked: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** مدخلات إنشاء/تحديث مزوّد محفوظ */
+export interface SavedProviderInput {
+  name: string;
+  provider: string;
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+  smallModel?: string;
+}
+
+/** عرض إعدادات الذكاء الاصطناعي الكامل (مزوّد نشط + قائمة المحفوظين) */
+export interface AiSettingsFullView {
+  configured: boolean;
+  provider: string;
+  providerLabel: string;
+  baseUrl: string;
+  model: string;
+  smallModel: string;
+  apiKeyMasked: string | null;
+  activeProviderId: string | null;
+  source: "saved" | "env" | "default";
+  providers: AiProviderOption[];
+  savedProviders: SavedProvider[];
 }

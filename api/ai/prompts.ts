@@ -2,6 +2,8 @@ import {
   APP_TYPE_LABELS,
   FEATURE_LABELS,
   SCALE_LABELS,
+  APPLICATION_MODE_LABELS,
+  CODE_AGENT_LABELS,
   type DocDefinition,
   type ProjectConfig,
 } from "@contracts/types";
@@ -25,18 +27,41 @@ Writing rules:
 - Every requirement must be verifiable; every task must have explicit success criteria.
 - Where a decision needs human judgment, present the options and trade-offs explicitly.`;
 
+function professionalContextBlock(config: ProjectConfig): string {
+  const ctx = config.professionalContext;
+  if (!ctx) return "";
+  const lines: string[] = [];
+  const add = (label: string, value?: string) => {
+    if (value && value.trim()) lines.push(`- ${label}: ${value.trim()}`);
+  };
+  add("Existing app context / repository structure", ctx.existingAppContext);
+  add("Delivery constraints", ctx.deliveryConstraints);
+  add("Non-functional priorities", ctx.nonFunctionalPriorities);
+  add("Integrations", ctx.integrations);
+  add("Deployment target", ctx.deploymentTarget);
+  add("Quality profile", ctx.qualityProfile);
+  add("Success metrics", ctx.successMetrics);
+  add("Security / compliance / data sensitivity", ctx.securityCompliance);
+  return lines.length ? `\n# Professional Context\n${lines.join("\n")}` : "";
+}
+
 export function projectBrief(name: string, idea: string, config: ProjectConfig): string {
   const appType = APP_TYPE_LABELS[config.appType];
+  const applicationMode = config.applicationMode ? APPLICATION_MODE_LABELS[config.applicationMode] : null;
+  const preferredCodeAgent = config.preferredCodeAgent ? CODE_AGENT_LABELS[config.preferredCodeAgent] : null;
   return `
 # Project Under Documentation
 - Name: ${name}
 - Type: ${appType.en} (${appType.ar})
+- Application mode: ${applicationMode ? `${applicationMode.en} (${applicationMode.ar})` : "New build unless stated otherwise"}
 - Target scale: ${SCALE_LABELS[config.scale]}
 - Target audience: ${config.audience || "General users"}
 - Platforms: ${config.platforms.length ? config.platforms.join(", ") : "Web"}
 - Key capabilities: ${config.features.length ? config.features.map((f) => FEATURE_LABELS[f]).join("، ") : "Core functionality only"}
 - Preferred stack (if any): ${config.preferredStack || "Choose the best modern stack and justify it"}
+- Preferred code agent: ${preferredCodeAgent || "No preference"}
 - Constraints: ${config.constraints || "None specified"}
+${professionalContextBlock(config)}
 
 # The User's Idea
 ${idea}
@@ -59,7 +84,7 @@ export function buildDocPrompt(
   const brief = projectBrief(name, idea, config);
 
   const bodies: Record<DocDefinition["key"], string> = {
-    prd: `Write the Product Requirements Document (PRD) for this project, file "${def.fileName}".
+    prd: `Write the Product Requirements Document (PRD) for this project, file "${def.fileName}".${config.professionalContext?.successMetrics ? ` The user provided success metrics: ${config.professionalContext.successMetrics}. Use them as the basis for the Goals & success metrics section.` : ""}${config.professionalContext?.nonFunctionalPriorities ? ` The user provided non-functional priorities: ${config.professionalContext.nonFunctionalPriorities}. Reflect them in the non-functional requirements section.` : ""}
 Required structure:
 1. Vision & problem statement — the intent behind the product (intent is the new interface).
 2. Goals & measurable success metrics (North-star + guardrail metrics).
@@ -71,7 +96,7 @@ Required structure:
 8. Open questions that REQUIRE human decisions — present each with options and a recommendation.
 ${lang}`,
 
-    architecture: `Write the Architecture document for this project, file "${def.fileName}".
+    architecture: `Write the Architecture document for this project, file "${def.fileName}".${config.professionalContext?.existingAppContext ? ` The user is updating an existing app — context/structure: ${config.professionalContext.existingAppContext}. Respect the existing architecture and propose incremental, compatible changes.` : ""}${config.professionalContext?.integrations ? ` Required integrations: ${config.professionalContext.integrations}. Model them explicitly in the component and API surface sections.` : ""}
 Required structure:
 1. System overview with a Mermaid diagram (context level).
 2. Recommended tech stack in a table: layer / choice / justification — modern, proven, maintainable. ${config.preferredStack ? `Respect the user's preferred stack where sensible: ${config.preferredStack}.` : ""}
@@ -84,7 +109,7 @@ Required structure:
 9. Risks & trade-offs — what this architecture deliberately does NOT solve.
 ${lang}`,
 
-    agentsMd: `Write the AGENTS.md file for this project's repository — the static context that every coding agent loads first (per the paper: start with stack, conventions, hard rules, workflow; add a rule every time the agent misbehaves).
+    agentsMd: `Write the AGENTS.md file for this project's repository — the static context that every coding agent loads first (per the paper: start with stack, conventions, hard rules, workflow; add a rule every time the agent misbehaves).${config.preferredCodeAgent ? ` Tailor tool-specific workflow notes for ${CODE_AGENT_LABELS[config.preferredCodeAgent]}.` : ""}
 Required structure:
 1. Project summary (3-5 lines an agent can rely on).
 2. Tech stack & versions table.
@@ -113,7 +138,7 @@ Required structure:
 5. Maintenance protocol: how context files are reviewed, versioned, and owned like code.
 ${lang}`,
 
-    specPlan: `Write the Spec-Driven Implementation Plan for this project, file "${def.fileName}" — the factory floor plan for orchestrating coding agents.
+    specPlan: `Write the Spec-Driven Implementation Plan for this project, file "${def.fileName}" — the factory floor plan for orchestrating coding agents. ${config.applicationMode ? `Plan for application mode: ${APPLICATION_MODE_LABELS[config.applicationMode].en}.` : ""}${config.professionalContext ? ` Honor the professional context the user provided (existing app context, delivery constraints, non-functional priorities, integrations, deployment target, quality profile, success metrics, security/compliance) and reflect it in milestones, task ordering, and success criteria.` : ""}
 Required structure:
 1. Delivery strategy: phases/milestones (M0 foundation → Mn launch), each with exit criteria.
 2. Task decomposition: break the build into 12-20 agent-sized tasks. For EACH task provide a spec card in a table or structured block containing: ID, title, objective, files/modules touched, dependencies, exact success criteria (verifiable), estimated complexity (S/M/L), and the recommended mode (Conductor for tricky/novel logic, Orchestrator for well-specified work).
@@ -132,7 +157,7 @@ Required structure:
 6. The continuous quality flywheel: evaluate → diagnose failure clusters → optimize → regression-verify → monitor in production.
 ${lang}`,
 
-    guardrails: `Write the Guardrails & Security document for this project, file "${def.fileName}".
+    guardrails: `Write the Guardrails & Security document for this project, file "${def.fileName}".${config.professionalContext?.securityCompliance ? ` The user flagged security/compliance/data sensitivity: ${config.professionalContext.securityCompliance}. Make the threat model and compliance notes concrete to these requirements.` : ""}
 Required structure:
 1. Threat model: top 8 risks for THIS project type (injection, auth bypass, data exposure, supply-chain/slopsquatting, secret leakage...) with likelihood/impact and mitigation.
 2. Deterministic hooks (per the paper, hooks are for what the agent must never forget): a table of lifecycle hooks — pre-tool-call, post-edit, pre-commit, pre-deploy — with the exact check each performs (e.g. block hard-coded secrets, enforce lint, block dependency additions without review).
@@ -143,7 +168,7 @@ Required structure:
 7. Compliance & data protection notes appropriate to the audience and scale.
 ${lang}`,
 
-    devopsObservability: `Write the Deployment & Observability document for this project, file "${def.fileName}".
+    devopsObservability: `Write the Deployment & Observability document for this project, file "${def.fileName}".${config.professionalContext?.deploymentTarget ? ` The user specified a deployment target: ${config.professionalContext.deploymentTarget}. Align environment and pipeline choices to it.` : ""}
 Required structure:
 1. Environments & promotion: dev → staging → production, with the infrastructure choices for the stated scale (${SCALE_LABELS[config.scale]}).
 2. CI/CD pipeline: stages as a Mermaid flowchart; AI-aware touches (AI first-pass review, deploy-risk prediction, auto-rollback triggers).

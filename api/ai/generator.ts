@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { generateText } from "ai";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, max } from "drizzle-orm";
 import { DOC_DEFINITIONS, type DocKey, type ProjectConfig } from "@contracts/types";
 import { getDb } from "../queries/connection";
-import { documents, projects, runs } from "@db/schema";
+import { documents, packageVersions, projects, runs } from "@db/schema";
 import { buildDocPrompt, SYSTEM_PROMPT } from "./prompts";
 import { generateFromTemplate } from "./templates";
 import { getModel, resolveAiConfig } from "./provider";
@@ -54,8 +54,62 @@ function formatAiError(err: unknown): string {
   return String(err).slice(0, 500);
 }
 
-function upsertDoc(entry: {
+type PackageChangeType = "initial_generation" | "full_regeneration" | "config_update" | "single_doc_regeneration";
+
+function latestPackageVersion(projectId: string) {
+  return getDb()
+    .select()
+    .from(packageVersions)
+    .where(eq(packageVersions.projectId, projectId))
+    .all()
+    .sort((a, b) => b.versionNumber - a.versionNumber)[0] ?? null;
+}
+
+function createPackageVersion(
+  projectId: string,
+  metadata: {
+    changeType: PackageChangeType;
+    changeSummary: string;
+    createdFromVersionNumber?: number | null;
+    status?: "queued" | "generating" | "updating" | "ready" | "failed";
+  },
+) {
+  const db = getDb();
+  const latest = db
+    .select({ value: max(packageVersions.versionNumber) })
+    .from(packageVersions)
+    .where(eq(packageVersions.projectId, projectId))
+    .all()[0]?.value ?? 0;
+  const versionNumber = latest + 1;
+  const now = new Date();
+  const version = {
+    id: randomUUID(),
+    projectId,
+    versionNumber,
+    label: `v${versionNumber}`,
+    status: metadata.status ?? "queued",
+    changeType: metadata.changeType,
+    changeSummary: metadata.changeSummary,
+    createdFromVersionNumber: metadata.createdFromVersionNumber ?? null,
+    updatedAt: now,
+    completedAt: null,
+  };
+  db.insert(packageVersions).values(version).run();
+  return version;
+}
+
+function updatePackageVersionStatus(versionId: string, status: "generating" | "updating" | "ready" | "failed") {
+  getDb()
+    .update(packageVersions)
+    .set({ status, updatedAt: new Date(), completedAt: status === "ready" || status === "failed" ? new Date() : null })
+    .where(eq(packageVersions.id, versionId))
+    .run();
+}
+
+function insertDoc(entry: {
   projectId: string;
+  packageVersionId: string;
+  packageVersionNumber: number;
   key: DocKey;
   title: string;
   fileName: string;
@@ -63,38 +117,45 @@ function upsertDoc(entry: {
   source: "ai" | "template" | "ai-fallback";
   model: string | null;
 }) {
-  const db = getDb();
-  const existing = db
+  getDb()
+    .insert(documents)
+    .values({
+      id: randomUUID(),
+      projectId: entry.projectId,
+      packageVersionId: entry.packageVersionId,
+      packageVersionNumber: entry.packageVersionNumber,
+      key: entry.key,
+      title: entry.title,
+      fileName: entry.fileName,
+      content: entry.content,
+      source: entry.source,
+      model: entry.model,
+    })
+    .run();
+}
+
+function copyLatestDocsToVersion(projectId: string, version: { id: string; versionNumber: number }, exceptKey?: DocKey) {
+  const latest = latestPackageVersion(projectId);
+  if (!latest) return;
+  const existingDocs = getDb()
     .select()
     .from(documents)
-    .where(eq(documents.projectId, entry.projectId))
+    .where(eq(documents.projectId, projectId))
     .all()
-    .find((d) => d.key === entry.key);
+    .filter((doc) => doc.packageVersionNumber === latest.versionNumber && doc.key !== exceptKey);
 
-  if (existing) {
-    db.update(documents)
-      .set({
-        title: entry.title,
-        fileName: entry.fileName,
-        content: entry.content,
-        source: entry.source,
-        model: entry.model,
-      })
-      .where(eq(documents.id, existing.id))
-      .run();
-  } else {
-    db.insert(documents)
-      .values({
-        id: randomUUID(),
-        projectId: entry.projectId,
-        key: entry.key,
-        title: entry.title,
-        fileName: entry.fileName,
-        content: entry.content,
-        source: entry.source,
-        model: entry.model,
-      })
-      .run();
+  for (const doc of existingDocs) {
+    insertDoc({
+      projectId,
+      packageVersionId: version.id,
+      packageVersionNumber: version.versionNumber,
+      key: doc.key as DocKey,
+      title: doc.title,
+      fileName: doc.fileName,
+      content: doc.content,
+      source: doc.source as "ai" | "template" | "ai-fallback",
+      model: doc.model,
+    });
   }
 }
 
@@ -175,7 +236,10 @@ async function generateOneDoc(
   };
 }
 
-export async function runGeneration(projectId: string): Promise<void> {
+export async function runGeneration(
+  projectId: string,
+  options: { changeType?: PackageChangeType; changeSummary?: string } = {},
+): Promise<void> {
   if (activeJobs.has(projectId)) return;
   activeJobs.add(projectId);
 
@@ -195,16 +259,28 @@ export async function runGeneration(projectId: string): Promise<void> {
       .run();
 
     const config = project.config as ProjectConfig;
+    const previousVersion = latestPackageVersion(projectId);
+    const version = createPackageVersion(projectId, {
+      changeType: options.changeType ?? (previousVersion ? "full_regeneration" : "initial_generation"),
+      changeSummary: options.changeSummary ?? (previousVersion ? "Full project regeneration" : "Initial package generation"),
+      createdFromVersionNumber: previousVersion?.versionNumber ?? null,
+      status: "generating",
+    });
 
     for (const def of DOC_DEFINITIONS) {
       const doc = await generateOneDoc(def, project.name, project.idea, config, projectId);
-      upsertDoc(doc);
+      insertDoc({
+        ...doc,
+        packageVersionId: version.id,
+        packageVersionNumber: version.versionNumber,
+      });
       db.update(projects)
         .set({ updatedAt: new Date() })
         .where(eq(projects.id, projectId))
         .run();
     }
 
+    updatePackageVersionStatus(version.id, "ready");
     db.update(projects)
       .set({ status: "ready", updatedAt: new Date() })
       .where(eq(projects.id, projectId))
@@ -216,6 +292,8 @@ export async function runGeneration(projectId: string): Promise<void> {
       status: "error",
       detail: err instanceof Error ? err.message.slice(0, 500) : String(err),
     });
+    const failedVersion = latestPackageVersion(projectId);
+    if (failedVersion?.status !== "ready") updatePackageVersionStatus(failedVersion.id, "failed");
     db.update(projects)
       .set({ status: "failed", updatedAt: new Date() })
       .where(eq(projects.id, projectId))
@@ -228,6 +306,7 @@ export async function runGeneration(projectId: string): Promise<void> {
 export async function regenerateSingleDoc(
   projectId: string,
   key: DocKey,
+  changeSummary = `Regenerated ${key}`,
 ): Promise<void> {
   const db = getDb();
   const project = db
@@ -241,9 +320,40 @@ export async function regenerateSingleDoc(
   const def = DOC_DEFINITIONS.find((d) => d.key === key);
   if (!def) throw new Error("Unknown doc key");
 
-  const doc = await generateOneDoc(def, project.name, project.idea, project.config as ProjectConfig, projectId);
-  upsertDoc(doc);
-  db.update(projects).set({ updatedAt: new Date() }).where(eq(projects.id, projectId)).run();
+  const previousVersion = latestPackageVersion(projectId);
+  const version = createPackageVersion(projectId, {
+    changeType: "single_doc_regeneration",
+    changeSummary,
+    createdFromVersionNumber: previousVersion?.versionNumber ?? null,
+    status: "updating",
+  });
+
+  db.update(projects).set({ status: "generating", updatedAt: new Date() }).where(eq(projects.id, projectId)).run();
+  try {
+    copyLatestDocsToVersion(projectId, version, key);
+    const doc = await generateOneDoc(def, project.name, project.idea, project.config as ProjectConfig, projectId);
+    insertDoc({ ...doc, packageVersionId: version.id, packageVersionNumber: version.versionNumber });
+    updatePackageVersionStatus(version.id, "ready");
+    db.update(projects).set({ status: "ready", updatedAt: new Date() }).where(eq(projects.id, projectId)).run();
+  } catch (err) {
+    updatePackageVersionStatus(version.id, "failed");
+    db.update(projects).set({ status: "failed", updatedAt: new Date() }).where(eq(projects.id, projectId)).run();
+    throw err;
+  }
+}
+
+export function updateProjectInputs(projectId: string, input: { name: string; idea: string; config: ProjectConfig }) {
+  getDb()
+    .update(projects)
+    .set({
+      name: input.name.trim(),
+      idea: input.idea.trim(),
+      config: input.config,
+      docLanguage: input.config.docLanguage,
+      updatedAt: new Date(),
+    })
+    .where(eq(projects.id, projectId))
+    .run();
 }
 
 /** إنقاذ المشاريع العالقة في حالة "generating" بعد إعادة تشغيل الخادم. */

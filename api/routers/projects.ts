@@ -10,12 +10,26 @@ import {
   type ProjectStatus,
   type ProjectSummary,
   type RunMetric,
+  type PackageVersion,
+  type AiSettingsFullView,
 } from "@contracts/types";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { documents, projects, runs } from "@db/schema";
-import { isGenerating, regenerateSingleDoc, runGeneration } from "../ai/generator";
-import { AI_PROVIDER_DEFINITIONS, AI_PROVIDER_IDS, maskKey, resolveAiConfig, saveAiConfig } from "../ai/provider";
+import { documents, packageVersions, projects, runs } from "@db/schema";
+import { isGenerating, regenerateSingleDoc, runGeneration, updateProjectInputs } from "../ai/generator";
+import {
+  AI_PROVIDER_DEFINITIONS,
+  AI_PROVIDER_IDS,
+  clearActiveSavedProvider,
+  createSavedProvider,
+  deleteSavedProvider,
+  listSavedProviders,
+  maskKey,
+  resolveAiConfig,
+  saveAiConfig,
+  setActiveSavedProvider,
+  updateSavedProvider,
+} from "../ai/provider";
 
 const configSchema = z.object({
   appType: z.enum(["web", "mobile", "api", "desktop", "cli", "aiAgent", "other"]),
@@ -44,6 +58,20 @@ const configSchema = z.object({
   constraints: z.string().max(2000).default(""),
   docLanguage: z.enum(["ar", "en"]),
   preferredStack: z.string().max(500).default(""),
+  preferredCodeAgent: z.enum(["codex", "claudeCode", "cursor", "roo", "cline", "githubCopilot", "windsurf", "generic", "other", "none"]).optional(),
+  applicationMode: z.enum(["mvp", "existingApp", "enterpriseApp", "newBuild", "featureExpansion", "migration"]).optional(),
+  professionalContext: z
+    .object({
+      existingAppContext: z.string().max(3000).optional(),
+      deliveryConstraints: z.string().max(2000).optional(),
+      nonFunctionalPriorities: z.string().max(2000).optional(),
+      integrations: z.string().max(2000).optional(),
+      deploymentTarget: z.string().max(1000).optional(),
+      qualityProfile: z.string().max(1000).optional(),
+      successMetrics: z.string().max(2000).optional(),
+      securityCompliance: z.string().max(2000).optional(),
+    })
+    .optional(),
 });
 
 function toSummary(row: typeof projects.$inferSelect, docsCount: number): ProjectSummary {
@@ -60,12 +88,36 @@ function toSummary(row: typeof projects.$inferSelect, docsCount: number): Projec
   };
 }
 
+function toPackageVersion(row: typeof packageVersions.$inferSelect): PackageVersion {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    versionNumber: row.versionNumber,
+    label: row.label,
+    status: row.status as PackageVersion["status"],
+    changeType: row.changeType as PackageVersion["changeType"],
+    changeSummary: row.changeSummary,
+    createdFromVersionNumber: row.createdFromVersionNumber,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    completedAt: row.completedAt,
+  };
+}
+
+function latestVersionNumber(rows: Array<typeof packageVersions.$inferSelect>, projectId: string): number {
+  return rows.filter((v) => v.projectId === projectId).sort((a, b) => b.versionNumber - a.versionNumber)[0]?.versionNumber ?? 1;
+}
+
 export const projectsRouter = createRouter({
   list: publicQuery.query((): ProjectSummary[] => {
     const db = getDb();
     const rows = db.select().from(projects).orderBy(desc(projects.createdAt)).all();
     const allDocs = db.select().from(documents).all();
-    return rows.map((r) => toSummary(r, allDocs.filter((d) => d.projectId === r.id).length));
+    const allVersions = db.select().from(packageVersions).all();
+    return rows.map((r) => {
+      const currentVersion = latestVersionNumber(allVersions, r.id);
+      return toSummary(r, allDocs.filter((d) => d.projectId === r.id && d.packageVersionNumber === currentVersion).length);
+    });
   }),
 
   get: publicQuery
@@ -75,11 +127,19 @@ export const projectsRouter = createRouter({
       const row = db.select().from(projects).where(eq(projects.id, input.id)).limit(1).all()[0];
       if (!row) throw new Error("المشروع غير موجود");
 
+      const versionRows = db
+        .select()
+        .from(packageVersions)
+        .where(eq(packageVersions.projectId, input.id))
+        .orderBy(desc(packageVersions.versionNumber))
+        .all();
+      const currentVersionNumber = versionRows[0]?.versionNumber ?? 1;
       const docRows = db
         .select()
         .from(documents)
         .where(eq(documents.projectId, input.id))
-        .all();
+        .all()
+        .filter((d) => d.packageVersionNumber === currentVersionNumber);
       const runRows = db
         .select()
         .from(runs)
@@ -100,6 +160,8 @@ export const projectsRouter = createRouter({
           content: d.content,
           source: d.source as GeneratedDoc["source"],
           model: d.model,
+          packageVersionId: d.packageVersionId,
+          packageVersionNumber: d.packageVersionNumber,
           createdAt: d.createdAt,
         }));
 
@@ -122,6 +184,8 @@ export const projectsRouter = createRouter({
         config: row.config as ProjectConfig,
         docs,
         metrics,
+        currentVersion: versionRows[0] ? toPackageVersion(versionRows[0]) : null,
+        versions: versionRows.map(toPackageVersion),
       };
     }),
 
@@ -147,21 +211,34 @@ export const projectsRouter = createRouter({
         })
         .run();
       // إطلاق التوليد كمهمة خلفية — لا ننتظره
-      void runGeneration(id);
+      void runGeneration(id, { changeType: "initial_generation", changeSummary: "Initial package generation" });
       return { id };
     }),
 
   regenerate: publicQuery
-    .input(z.object({ id: z.string().min(1) }))
+    .input(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().min(1).max(120).optional(),
+        idea: z.string().min(20).max(20000).optional(),
+        config: configSchema.optional(),
+        changeSummary: z.string().max(500).optional(),
+      }),
+    )
     .mutation(({ input }) => {
-      void runGeneration(input.id);
+      if (input.name && input.idea && input.config) {
+        updateProjectInputs(input.id, { name: input.name, idea: input.idea, config: input.config });
+        void runGeneration(input.id, { changeType: "config_update", changeSummary: input.changeSummary ?? "Project inputs/config updated" });
+      } else {
+        void runGeneration(input.id, { changeType: "full_regeneration", changeSummary: input.changeSummary ?? "Full project regeneration" });
+      }
       return { ok: true };
     }),
 
   regenerateDoc: publicQuery
-    .input(z.object({ id: z.string().min(1), key: z.enum(DOC_KEYS as [string, ...string[]]) }))
+    .input(z.object({ id: z.string().min(1), key: z.enum(DOC_KEYS as [string, ...string[]]), changeSummary: z.string().max(500).optional() }))
     .mutation(async ({ input }) => {
-      await regenerateSingleDoc(input.id, input.key as (typeof DOC_KEYS)[number]);
+      await regenerateSingleDoc(input.id, input.key as (typeof DOC_KEYS)[number], input.changeSummary);
       return { ok: true };
     }),
 
@@ -170,6 +247,7 @@ export const projectsRouter = createRouter({
     .mutation(({ input }) => {
       const db = getDb();
       db.delete(documents).where(eq(documents.projectId, input.id)).run();
+      db.delete(packageVersions).where(eq(packageVersions.projectId, input.id)).run();
       db.delete(runs).where(eq(runs.projectId, input.id)).run();
       db.delete(projects).where(eq(projects.id, input.id)).run();
       return { ok: true };
@@ -179,11 +257,19 @@ export const projectsRouter = createRouter({
     const db = getDb();
     const row = db.select().from(projects).where(eq(projects.id, input.id)).limit(1).all()[0];
     if (!row) throw new Error("المشروع غير موجود");
+    const latestVersion = db
+      .select()
+      .from(packageVersions)
+      .where(eq(packageVersions.projectId, input.id))
+      .orderBy(desc(packageVersions.versionNumber))
+      .limit(1)
+      .all()[0]?.versionNumber ?? 1;
     const docsCount = db
       .select()
       .from(documents)
       .where(eq(documents.projectId, input.id))
-      .all().length;
+      .all()
+      .filter((d) => d.packageVersionNumber === latestVersion).length;
     return {
       status: row.status as ProjectStatus,
       docsCount,
@@ -193,8 +279,29 @@ export const projectsRouter = createRouter({
   }),
 });
 
+const providerInputSchema = z.object({
+  name: z.string().min(1, "اسم الإعداد مطلوب").max(80),
+  provider: z.enum(AI_PROVIDER_IDS),
+  baseUrl: z.string().url().max(300),
+  apiKey: z.string().max(500).optional(),
+  model: z.string().min(1).max(160),
+  smallModel: z.string().max(160).default(""),
+});
+
+function providerOptions() {
+  return Object.values(AI_PROVIDER_DEFINITIONS).map(({ id, label, baseUrl, requiresBaseUrl, model, smallModel, helpText }) => ({
+    id,
+    label,
+    baseUrl,
+    requiresBaseUrl,
+    model,
+    smallModel,
+    helpText,
+  }));
+}
+
 export const settingsRouter = createRouter({
-  getAi: publicQuery.query(() => {
+  getAi: publicQuery.query((): AiSettingsFullView => {
     const cfg = resolveAiConfig();
     return {
       configured: cfg.configured,
@@ -204,15 +311,10 @@ export const settingsRouter = createRouter({
       model: cfg.model,
       smallModel: cfg.smallModel,
       apiKeyMasked: maskKey(cfg.apiKey),
-      providers: Object.values(AI_PROVIDER_DEFINITIONS).map(({ id, label, baseUrl, requiresBaseUrl, model, smallModel, helpText }) => ({
-        id,
-        label,
-        baseUrl,
-        requiresBaseUrl,
-        model,
-        smallModel,
-        helpText,
-      })),
+      activeProviderId: cfg.activeProviderId,
+      source: cfg.source,
+      providers: providerOptions(),
+      savedProviders: listSavedProviders(),
     };
   }),
 
@@ -234,6 +336,7 @@ export const settingsRouter = createRouter({
         model: input.model.trim(),
         smallModel: input.smallModel.trim(),
       });
+      clearActiveSavedProvider();
       const cfg = resolveAiConfig();
       return { configured: cfg.configured, apiKeyMasked: maskKey(cfg.apiKey) };
     }),
@@ -242,4 +345,24 @@ export const settingsRouter = createRouter({
     saveAiConfig({ apiKey: "" });
     return { ok: true };
   }),
+
+  listProviders: publicQuery.query(() => listSavedProviders()),
+
+  createProvider: publicQuery
+    .input(providerInputSchema.extend({ makeActive: z.boolean().default(false) }))
+    .mutation(({ input }) => createSavedProvider(input, input.makeActive)),
+
+  updateProvider: publicQuery
+    .input(
+      providerInputSchema.partial().extend({
+        id: z.string().min(1),
+      }),
+    )
+    .mutation(({ input }) => updateSavedProvider(input.id, input)),
+
+  deleteProvider: publicQuery.input(z.object({ id: z.string().min(1) })).mutation(({ input }) => deleteSavedProvider(input.id)),
+
+  setActiveProvider: publicQuery.input(z.object({ id: z.string().min(1) })).mutation(({ input }) => setActiveSavedProvider(input.id)),
+
+  clearActiveProvider: publicQuery.mutation(() => clearActiveSavedProvider()),
 });

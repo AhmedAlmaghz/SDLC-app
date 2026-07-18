@@ -10,16 +10,20 @@ import {
   FileText,
   Gauge,
   Loader2,
+  Pencil,
   RefreshCw,
   TriangleAlert,
 } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
-import { DOC_DEFINITIONS, type DocSource } from "@contracts/types";
+import { DOC_DEFINITIONS, type DocKey, type DocSource, type PackageChangeType, type PackageVersionStatus } from "@contracts/types";
 import { trpc } from "@/providers/trpc";
+import IdeaWizard from "@/components/IdeaWizard";
 import MarkdownView from "@/components/MarkdownView";
+import { buildDocumentBundle, packageVersionFolder } from "@/lib/packageExport";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +31,21 @@ const SOURCE_META: Record<DocSource, { label: string; className: string }> = {
   ai: { label: "ذكاء اصطناعي", className: "bg-primary/15 text-primary" },
   template: { label: "محرك القوالب", className: "bg-sky-500/15 text-sky-400" },
   "ai-fallback": { label: "AI → احتياط", className: "bg-amber-500/15 text-amber-400" },
+};
+
+const VERSION_STATUS_META: Record<PackageVersionStatus, { label: string; className: string; dot: string }> = {
+  queued: { label: "في الانتظار", className: "border-amber-500/30 bg-amber-500/10 text-amber-300", dot: "bg-amber-400" },
+  generating: { label: "توليد", className: "border-amber-500/30 bg-amber-500/10 text-amber-300", dot: "bg-amber-400 animate-pulse" },
+  updating: { label: "تحديث", className: "border-amber-500/30 bg-amber-500/10 text-amber-300", dot: "bg-amber-400 animate-pulse" },
+  ready: { label: "مكتمل", className: "border-primary/30 bg-primary/10 text-primary", dot: "bg-primary" },
+  failed: { label: "فشل", className: "border-destructive/40 bg-destructive/10 text-red-300", dot: "bg-red-400" },
+};
+
+const CHANGE_TYPE_LABELS: Record<PackageChangeType, string> = {
+  initial_generation: "توليد أولي",
+  full_regeneration: "إعادة توليد كاملة",
+  config_update: "تحديث إعدادات",
+  single_doc_regeneration: "تحديث وثيقة واحدة",
 };
 
 function downloadBlob(blob: Blob, name: string) {
@@ -45,12 +64,14 @@ export default function ProjectDetail() {
   const [copied, setCopied] = useState(false);
   const [zipping, setZipping] = useState(false);
   const [showMetrics, setShowMetrics] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [pendingDocKey, setPendingDocKey] = useState<DocKey | null>(null);
 
   const { data: project } = trpc.projects.get.useQuery(
     { id },
     {
       refetchInterval: (query) =>
-        query.state.data?.status === "generating" ? 2000 : false,
+        query.state.data?.status === "generating" || query.state.data?.currentVersion?.status === "generating" || query.state.data?.currentVersion?.status === "updating" ? 2000 : false,
     },
   );
 
@@ -59,10 +80,14 @@ export default function ProjectDetail() {
   });
   const regenerateDoc = trpc.projects.regenerateDoc.useMutation({
     onSuccess: () => {
-      toast.success("أُعيد توليد الوثيقة");
+      toast.success("أُعيد توليد الوثيقة في إصدار جديد");
+      setPendingDocKey(null);
       void utils.projects.get.invalidate({ id });
     },
-    onError: () => toast.error("تعذّرت إعادة التوليد"),
+    onError: () => {
+      setPendingDocKey(null);
+      toast.error("تعذّرت إعادة التوليد");
+    },
   });
 
   const docs = useMemo(() => project?.docs ?? [], [project?.docs]);
@@ -87,6 +112,11 @@ export default function ProjectDetail() {
   }
 
   const progress = Math.round((project.docsCount / project.totalDocs) * 100);
+  const currentVersion = project.currentVersion;
+  const versionStatus = currentVersion?.status ?? (project.status === "ready" ? "ready" : "queued");
+  const statusMeta = VERSION_STATUS_META[versionStatus];
+  const isVersionInFlight = versionStatus === "queued" || versionStatus === "generating" || versionStatus === "updating" || project.status === "generating";
+  const versionContext = currentVersion ? CHANGE_TYPE_LABELS[currentVersion.changeType] : "توليد";
 
   const copyDoc = async () => {
     if (!activeDoc) return;
@@ -109,14 +139,21 @@ export default function ProjectDetail() {
     setZipping(true);
     try {
       const zip = new JSZip();
-      const folder = zip.folder(`${project.name}-doc-package`) ?? zip;
+      const rootName = packageVersionFolder(project);
+      const folder = zip.folder(rootName) ?? zip;
+      const versionLabel = project.currentVersion?.label ?? "v1";
       folder.file(
         "README.md",
-        `# حزمة توثيق ${project.name}\n\n${project.idea}\n\n---\nولّدها مِرْوَر وفق إطار «The New SDLC with Vibe Coding».\nضع هذه الملفات في جذر المستودع، وابدأ الـ Vibe Coding بملف AGENTS.md.\n`,
+        `# حزمة توثيق ${project.name}\n\n- Version: ${versionLabel}\n- Documents: ${docs.length}/${project.totalDocs}\n\n${project.idea}\n\n---\nولّدها مِرْوَر وفق إطار «The New SDLC with Vibe Coding».\nكل وثيقة كبيرة محفوظة داخل مجلدها مع ملف INDEX.md وقائمة أجزاء مرتبة.\n`,
       );
-      for (const d of docs) folder.file(d.fileName, d.content);
+      for (const d of docs) {
+        const bundle = buildDocumentBundle(d, project);
+        const docFolder = folder.folder(bundle.folderName) ?? folder;
+        docFolder.file(bundle.indexFileName, bundle.indexContent);
+        for (const part of bundle.parts) docFolder.file(part.fileName, part.content);
+      }
       const blob = await zip.generateAsync({ type: "blob" });
-      downloadBlob(blob, `${project.name}-docs.zip`);
+      downloadBlob(blob, `${rootName}.zip`);
       toast.success("جُهّزت الحزمة المضغوطة");
     } finally {
       setZipping(false);
@@ -141,6 +178,10 @@ export default function ProjectDetail() {
               <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">{project.idea}</p>
             </div>
             <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="gap-2" disabled={isVersionInFlight} onClick={() => setEditOpen(true)}>
+                <Pencil className="h-4 w-4" />
+                تعديل
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -156,7 +197,7 @@ export default function ProjectDetail() {
                 className="gap-2"
                 disabled={project.status === "generating" || regenerateAll.isPending}
                 onClick={() => {
-                  if (confirm("إعادة توليد كل الوثائق؟ ستُستبدل المحتويات الحالية."))
+                  if (confirm("إعادة توليد كل الوثائق؟ سيُنشأ إصدار جديد مستقل وتبقى الإصدارات السابقة محفوظة."))
                     regenerateAll.mutate({ id });
                 }}
               >
@@ -179,11 +220,12 @@ export default function ProjectDetail() {
             </div>
           </div>
 
-          <div className="mt-5 grid gap-2 sm:grid-cols-3">
+          <div className="mt-5 grid gap-2 sm:grid-cols-4">
             {[
               { label: "الوثائق", value: `${project.docsCount}/${project.totalDocs}` },
+              { label: "الإصدار", value: project.currentVersion?.label ?? "v1" },
               { label: "لغة الحزمة", value: project.docLanguage === "ar" ? "العربية" : "English" },
-              { label: "المصدر", value: docs.some((doc) => doc.source === "ai") ? "AI + Harness" : "Template Engine" },
+              { label: "سياق الإصدار", value: versionContext },
             ].map((item) => (
               <div key={item.label} className="rounded-2xl border border-border bg-background/50 px-4 py-3">
                 <p className="text-xs text-muted-foreground">{item.label}</p>
@@ -192,19 +234,19 @@ export default function ProjectDetail() {
             ))}
           </div>
 
-          {/* شريط التقدم */}
-          {project.status === "generating" && (
-            <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-              <div className="mb-2 flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2 font-medium text-amber-400">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  يجري توليد حزمة التوثيق… {project.docsCount}/{project.totalDocs}
-                </span>
-                <span className="font-mono text-xs text-muted-foreground">{progress}%</span>
-              </div>
-              <Progress value={progress} className="h-2" />
+          <div className={cn("mt-5 rounded-xl border p-4", statusMeta.className)}>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="flex items-center gap-2 font-medium">
+                {isVersionInFlight ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className={cn("h-2.5 w-2.5 rounded-full", statusMeta.dot)} />}
+                {statusMeta.label}: {versionContext} — {project.docsCount}/{project.totalDocs}
+              </span>
+              <span className="font-mono text-xs text-muted-foreground">{progress}%</span>
             </div>
-          )}
+            <Progress value={progress} className="h-2" />
+            {currentVersion?.changeSummary && <p className="mt-2 text-xs text-muted-foreground">{currentVersion.changeSummary}</p>}
+            {currentVersion?.createdFromVersionNumber && <p className="mt-1 text-xs text-muted-foreground">نسخة مشتقة من v{currentVersion.createdFromVersionNumber}</p>}
+          </div>
+
           {project.status === "failed" && (
             <div className="mt-5 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-red-300">
               <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
@@ -300,22 +342,24 @@ export default function ProjectDetail() {
               <span className="font-mono">{progress}%</span>
             </div>
             <div className="grid grid-cols-9 gap-1" aria-label="تقدم وثائق الحزمة">
-              {DOC_DEFINITIONS.map((def) => (
-                <span
-                  key={def.key}
-                  className={cn(
-                    "h-2 rounded-full",
-                    completedDocs.has(def.key) ? "bg-primary" : "bg-secondary",
-                  )}
-                  title={def.titleAr}
-                />
-              ))}
+              {DOC_DEFINITIONS.map((def) => {
+                const isPending = isVersionInFlight && !completedDocs.has(def.key);
+                return (
+                  <span
+                    key={def.key}
+                    className={cn("h-2 rounded-full", completedDocs.has(def.key) ? "bg-primary" : isPending ? "bg-amber-400 animate-pulse" : "bg-secondary")}
+                    title={def.titleAr}
+                  />
+                );
+              })}
             </div>
           </div>
           <div className="space-y-1.5">
             {DOC_DEFINITIONS.map((def) => {
               const doc = docs.find((d) => d.key === def.key);
               const active = activeKey === def.key;
+              const pending = pendingDocKey === def.key || (!doc && isVersionInFlight) || (pendingDocKey === null && isVersionInFlight && currentVersion?.changeType !== "single_doc_regeneration" && !doc);
+              const docStatus = pending ? (currentVersion?.changeType === "config_update" ? "updating" : "generating") : doc ? "ready" : "queued";
               return (
                 <button
                   key={def.key}
@@ -335,24 +379,17 @@ export default function ProjectDetail() {
                     className={cn("h-4 w-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
                   />
                   <span className="min-w-0 flex-1">
-                    <span className={cn("block truncate text-sm font-semibold", active && "text-primary")}>
+                    <span className={cn("block truncate text-sm font-semibold", active && "text-primary", docStatus === "generating" || docStatus === "updating" ? "text-amber-300" : docStatus === "ready" ? "text-primary" : undefined)}>
                       {project.docLanguage === "ar" ? def.titleAr : def.titleEn}
                     </span>
                     <span className="block truncate text-[11px] text-muted-foreground">
-                      {def.phaseAr}
+                      {def.phaseAr} · {docStatus === "ready" ? "مكتملة" : docStatus === "updating" ? "تحديث جارٍ" : docStatus === "generating" ? "توليد جارٍ" : "في الانتظار"}
                     </span>
                   </span>
-                  {doc ? (
-                    <span
-                      className={cn(
-                        "h-2 w-2 shrink-0 rounded-full",
-                        doc.source === "ai" ? "bg-primary" : doc.source === "ai-fallback" ? "bg-amber-400" : "bg-sky-400",
-                      )}
-                    />
+                  {docStatus === "generating" || docStatus === "updating" ? (
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-300" />
                   ) : (
-                    project.status === "generating" && (
-                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                    )
+                    <span className={cn("h-2 w-2 shrink-0 rounded-full", docStatus === "ready" ? "bg-primary" : "bg-amber-400")} />
                   )}
                 </button>
               );
@@ -388,8 +425,11 @@ export default function ProjectDetail() {
                     variant="ghost"
                     size="sm"
                     className="gap-1.5"
-                    disabled={regenerateDoc.isPending}
-                    onClick={() => regenerateDoc.mutate({ id, key: activeDoc.key })}
+                    disabled={regenerateDoc.isPending || isVersionInFlight}
+                    onClick={() => {
+                      setPendingDocKey(activeDoc.key);
+                      regenerateDoc.mutate({ id, key: activeDoc.key, changeSummary: `Regenerated ${activeDoc.title}` });
+                    }}
                   >
                     <RefreshCw className={cn("h-4 w-4", regenerateDoc.isPending && "animate-spin")} />
                     إعادة
@@ -416,6 +456,22 @@ export default function ProjectDetail() {
           )}
         </section>
       </div>
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-h-[92vh] w-[min(96vw,1440px)] max-w-none overflow-y-auto p-0 sm:rounded-3xl">
+          <DialogHeader className="px-6 pt-6 lg:px-8">
+            <DialogTitle>تعديل المشروع وتوليد إصدار جديد</DialogTitle>
+          </DialogHeader>
+          <div className="px-6 pb-6 lg:px-8">
+            <IdeaWizard
+              initialValues={{ id: project.id, name: project.name, idea: project.idea, config: project.config }}
+              onSaved={() => {
+                setEditOpen(false);
+                void utils.projects.get.invalidate({ id });
+              }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

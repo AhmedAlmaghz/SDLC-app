@@ -65,6 +65,11 @@ function ensureSqliteSchema(sqlite: BetterSqlite3.Database) {
       title TEXT NOT NULL,
       file_name TEXT NOT NULL,
       content TEXT NOT NULL,
+      artifact_type TEXT NOT NULL DEFAULT 'markdown',
+      bundle_folder_name TEXT,
+      relative_path TEXT NOT NULL DEFAULT '',
+      section_order INTEGER,
+      parent_document_id TEXT,
       source TEXT NOT NULL DEFAULT 'template',
       model TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -126,7 +131,16 @@ function ensureSqliteSchema(sqlite: BetterSqlite3.Database) {
   if (!documentColumns.some((column) => column.name === "package_version_number")) {
     sqlite.exec("ALTER TABLE documents ADD COLUMN package_version_number INTEGER NOT NULL DEFAULT 1;");
   }
+  const ensureDocumentColumn = (name: string, definition: string) => {
+    if (!documentColumns.some((column) => column.name === name)) sqlite.exec(`ALTER TABLE documents ADD COLUMN ${definition};`);
+  };
+  ensureDocumentColumn("artifact_type", "artifact_type TEXT NOT NULL DEFAULT 'markdown'");
+  ensureDocumentColumn("bundle_folder_name", "bundle_folder_name TEXT");
+  ensureDocumentColumn("relative_path", "relative_path TEXT NOT NULL DEFAULT ''");
+  ensureDocumentColumn("section_order", "section_order INTEGER");
+  ensureDocumentColumn("parent_document_id", "parent_document_id TEXT");
   sqlite.exec("CREATE INDEX IF NOT EXISTS documents_project_version_idx ON documents(project_id, package_version_number);");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS documents_bundle_idx ON documents(project_id, package_version_number, bundle_folder_name, section_order);");
 
   const legacyProjects = sqlite
     .prepare(

@@ -53,6 +53,11 @@ export const documents = sqliteTable("documents", {
   title: text("title").notNull(),
   fileName: text("file_name").notNull(),
   content: text("content").notNull(),
+  artifactType: text("artifact_type").notNull().default("markdown"),
+  bundleFolderName: text("bundle_folder_name"),
+  relativePath: text("relative_path").notNull().default(""),
+  sectionOrder: integer("section_order"),
+  parentDocumentId: text("parent_document_id"),
   source: text("source").notNull().default("template"),
   model: text("model"),
   createdAt: integer("created_at", { mode: "timestamp" })

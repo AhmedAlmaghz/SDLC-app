@@ -2,11 +2,19 @@ import { randomUUID } from "node:crypto";
 import { generateText } from "ai";
 import { asc, eq, max } from "drizzle-orm";
 import { DOC_DEFINITIONS, type DocKey, type ProjectConfig } from "@contracts/types";
+import {
+  createDocumentBundle,
+  deriveSectionPlan,
+  serializeDocumentBundle,
+  type DocumentBundleArtifact,
+  type DocumentSectionPlan,
+} from "@contracts/documentBundle";
 import { getDb } from "../queries/connection";
 import { documents, packageVersions, projects, runs } from "@db/schema";
-import { buildDocPrompt, SYSTEM_PROMPT } from "./prompts";
+import { SYSTEM_PROMPT } from "./prompts";
 import { generateFromTemplate } from "./templates";
 import { getModel, resolveAiConfig } from "./provider";
+import { buildSectionPrompt } from "./sectionPrompts";
 
 /**
  * منسّق التوليد — «نموذج المصنع» عملياً:
@@ -107,6 +115,7 @@ function updatePackageVersionStatus(versionId: string, status: "generating" | "u
 }
 
 function insertDoc(entry: {
+  id?: string;
   projectId: string;
   packageVersionId: string;
   packageVersionNumber: number;
@@ -114,13 +123,19 @@ function insertDoc(entry: {
   title: string;
   fileName: string;
   content: string;
+  artifactType?: "markdown" | "bundle" | "bundle-section";
+  bundleFolderName?: string | null;
+  relativePath?: string;
+  sectionOrder?: number | null;
+  parentDocumentId?: string | null;
   source: "ai" | "template" | "ai-fallback";
   model: string | null;
 }) {
+  const id = entry.id ?? randomUUID();
   getDb()
     .insert(documents)
     .values({
-      id: randomUUID(),
+      id,
       projectId: entry.projectId,
       packageVersionId: entry.packageVersionId,
       packageVersionNumber: entry.packageVersionNumber,
@@ -128,10 +143,62 @@ function insertDoc(entry: {
       title: entry.title,
       fileName: entry.fileName,
       content: entry.content,
+      artifactType: entry.artifactType ?? "markdown",
+      bundleFolderName: entry.bundleFolderName ?? null,
+      relativePath: entry.relativePath ?? entry.fileName,
+      sectionOrder: entry.sectionOrder ?? null,
+      parentDocumentId: entry.parentDocumentId ?? null,
       source: entry.source,
       model: entry.model,
     })
     .run();
+  return id;
+}
+
+function insertDocumentBundle(entry: {
+  projectId: string;
+  packageVersionId: string;
+  packageVersionNumber: number;
+  key: DocKey;
+  title: string;
+  bundle: DocumentBundleArtifact;
+  source: "ai" | "template" | "ai-fallback";
+  model: string | null;
+}) {
+  const parentId = insertDoc({
+    projectId: entry.projectId,
+    packageVersionId: entry.packageVersionId,
+    packageVersionNumber: entry.packageVersionNumber,
+    key: entry.key,
+    title: entry.title,
+    fileName: entry.bundle.metadata.indexFileName,
+    content: serializeDocumentBundle(entry.bundle),
+    artifactType: "bundle",
+    bundleFolderName: entry.bundle.metadata.folderName,
+    relativePath: entry.bundle.metadata.indexFileName,
+    sectionOrder: 0,
+    source: entry.source,
+    model: entry.model,
+  });
+
+  for (const section of entry.bundle.sections) {
+    insertDoc({
+      projectId: entry.projectId,
+      packageVersionId: entry.packageVersionId,
+      packageVersionNumber: entry.packageVersionNumber,
+      key: entry.key,
+      title: section.title,
+      fileName: section.fileName,
+      content: section.content,
+      artifactType: "bundle-section",
+      bundleFolderName: entry.bundle.metadata.folderName,
+      relativePath: section.fileName,
+      sectionOrder: section.order,
+      parentDocumentId: parentId,
+      source: entry.source,
+      model: entry.model,
+    });
+  }
 }
 
 function copyLatestDocsToVersion(projectId: string, version: { id: string; versionNumber: number }, exceptKey?: DocKey) {
@@ -144,8 +211,9 @@ function copyLatestDocsToVersion(projectId: string, version: { id: string; versi
     .all()
     .filter((doc) => doc.packageVersionNumber === latest.versionNumber && doc.key !== exceptKey);
 
-  for (const doc of existingDocs) {
-    insertDoc({
+  const copiedIds = new Map<string, string>();
+  for (const doc of existingDocs.sort((a, b) => (a.sectionOrder ?? 0) - (b.sectionOrder ?? 0))) {
+    const copiedId = insertDoc({
       projectId,
       packageVersionId: version.id,
       packageVersionNumber: version.versionNumber,
@@ -153,13 +221,50 @@ function copyLatestDocsToVersion(projectId: string, version: { id: string; versi
       title: doc.title,
       fileName: doc.fileName,
       content: doc.content,
+      artifactType: doc.artifactType as "markdown" | "bundle" | "bundle-section",
+      bundleFolderName: doc.bundleFolderName,
+      relativePath: doc.relativePath,
+      sectionOrder: doc.sectionOrder,
+      parentDocumentId: doc.parentDocumentId ? copiedIds.get(doc.parentDocumentId) ?? null : null,
       source: doc.source as "ai" | "template" | "ai-fallback",
       model: doc.model,
     });
+    copiedIds.set(doc.id, copiedId);
   }
 }
 
-async function generateOneDoc(
+async function generateSectionWithAi(input: {
+  def: (typeof DOC_DEFINITIONS)[number];
+  name: string;
+  idea: string;
+  config: ProjectConfig;
+  projectId: string;
+  plan: DocumentSectionPlan;
+  allSections: DocumentSectionPlan[];
+}) {
+  const cfg = resolveAiConfig();
+  const selectedModelId = input.def.complexity === "high" ? cfg.model : cfg.smallModel || cfg.model;
+  const { model, modelId } = getModel(input.def.complexity);
+  try {
+    const result = await generateText({
+      model,
+      system: SYSTEM_PROMPT,
+      prompt: buildSectionPrompt(input),
+      maxOutputTokens: input.def.complexity === "high" ? 4500 : 3500,
+    });
+    return {
+      content: result.text.trim(),
+      modelLabel: `${cfg.provider}:${modelId}`,
+      inputTokens: result.usage?.inputTokens ?? null,
+      outputTokens: result.usage?.outputTokens ?? null,
+    };
+  } catch (err) {
+    const message = formatAiError(err);
+    throw new Error(`AI provider ${cfg.providerLabel} failed for ${input.def.key} section ${input.plan.order} using model ${selectedModelId}: ${message}`);
+  }
+}
+
+async function generateOneDocBundle(
   def: (typeof DOC_DEFINITIONS)[number],
   name: string,
   idea: string,
@@ -168,72 +273,85 @@ async function generateOneDoc(
 ) {
   const started = Date.now();
   const cfg = resolveAiConfig();
+  const title = config.docLanguage === "ar" ? def.titleAr : def.titleEn;
+  const sectionPlan = deriveSectionPlan(def, config.docLanguage);
 
   if (cfg.configured) {
-    const selectedModelId = def.complexity === "high" ? cfg.model : cfg.smallModel || cfg.model;
+    let modelLabel: string | null = null;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const sectionContents = [] as Array<{ plan: DocumentSectionPlan; content: string }>;
     try {
-      const { model, modelId } = getModel(def.complexity);
-      const result = await generateText({
-        model,
-        system: SYSTEM_PROMPT,
-        prompt: buildDocPrompt(def, name, idea, config),
-        maxOutputTokens: 8000,
+      for (const plan of sectionPlan) {
+        const section = await generateSectionWithAi({ def, name, idea, config, projectId, plan, allSections: sectionPlan });
+        modelLabel = section.modelLabel;
+        inputTokens += section.inputTokens ?? 0;
+        outputTokens += section.outputTokens ?? 0;
+        sectionContents.push({ plan, content: section.content });
+      }
+      const bundle = createDocumentBundle({
+        def,
+        title,
+        language: config.docLanguage,
+        projectName: name,
+        source: "ai",
+        model: modelLabel,
+        sectionContents,
       });
-      const durationMs = Date.now() - started;
       recordRun({
         projectId,
         docKey: def.key,
         kind: "doc",
-        model: `${cfg.provider}:${modelId}`,
-        inputTokens: result.usage?.inputTokens ?? null,
-        outputTokens: result.usage?.outputTokens ?? null,
-        durationMs,
+        model: modelLabel,
+        inputTokens,
+        outputTokens,
+        durationMs: Date.now() - started,
         status: "ok",
-        detail: "ai",
+        detail: `ai bundle (${sectionContents.length} sections)`,
       });
-      return {
-        projectId,
-        key: def.key,
-        title: config.docLanguage === "ar" ? def.titleAr : def.titleEn,
-        fileName: def.fileName,
-        content: result.text.trim(),
-        source: "ai" as const,
-        model: `${cfg.provider}:${modelId}`,
-      };
+      return { projectId, key: def.key, title, fileName: bundle.metadata.indexFileName, bundle, source: "ai" as const, model: modelLabel };
     } catch (err) {
-      const durationMs = Date.now() - started;
-      const message = formatAiError(err);
+      // Partial-failure decision (intentional): if ANY single section fails to
+      // generate, the entire document bundle is aborted. No partial bundle is
+      // assembled or persisted — we do not write a parent row or any section
+      // rows for this document. The error propagates to runGeneration, which
+      // marks the package version and project as "failed". This keeps the
+      // document set coherent: a document is either fully AI-generated or not
+      // present at all, avoiding half-written bundles that would mislead the
+      // UI/ZIP export. (The template fallback path below is only used when no
+      // AI key is configured, not when the AI provider errors mid-generation.)
       recordRun({
         projectId,
         docKey: def.key,
         kind: "doc",
-        model: `${cfg.provider}:${selectedModelId}`,
-        durationMs,
+        model: modelLabel ?? `${cfg.provider}:${def.complexity === "high" ? cfg.model : cfg.smallModel || cfg.model}`,
+        durationMs: Date.now() - started,
         status: "error",
-        detail: `AI provider failed; generation stopped: ${message}`,
+        detail: `AI provider failed; generation stopped: ${formatAiError(err)}`,
       });
-      throw new Error(`AI provider ${cfg.providerLabel} failed for ${def.key} using model ${selectedModelId}: ${message}`);
+      throw err;
     }
   }
 
   const tpl = generateFromTemplate(def.key, name, idea, config);
+  const fallbackPlan = deriveSectionPlan(def, config.docLanguage, [{ title: tpl.title, purpose: "Template-generated content preserved as a focused section." }]);
+  const bundle = createDocumentBundle({
+    def,
+    title: tpl.title,
+    language: config.docLanguage,
+    projectName: name,
+    source: "template",
+    sectionContents: [{ plan: fallbackPlan[0], content: tpl.content }],
+  });
   recordRun({
     projectId,
     docKey: def.key,
     kind: "doc",
     durationMs: Date.now() - started,
     status: "ok",
-    detail: "template (no AI key configured)",
+    detail: "template bundle (no AI key configured)",
   });
-  return {
-    projectId,
-    key: def.key,
-    title: tpl.title,
-    fileName: tpl.fileName,
-    content: tpl.content,
-    source: "template" as const,
-    model: null,
-  };
+  return { projectId, key: def.key, title: tpl.title, fileName: bundle.metadata.indexFileName, bundle, source: "template" as const, model: null };
 }
 
 export async function runGeneration(
@@ -268,8 +386,8 @@ export async function runGeneration(
     });
 
     for (const def of DOC_DEFINITIONS) {
-      const doc = await generateOneDoc(def, project.name, project.idea, config, projectId);
-      insertDoc({
+      const doc = await generateOneDocBundle(def, project.name, project.idea, config, projectId);
+      insertDocumentBundle({
         ...doc,
         packageVersionId: version.id,
         packageVersionNumber: version.versionNumber,
@@ -331,8 +449,8 @@ export async function regenerateSingleDoc(
   db.update(projects).set({ status: "generating", updatedAt: new Date() }).where(eq(projects.id, projectId)).run();
   try {
     copyLatestDocsToVersion(projectId, version, key);
-    const doc = await generateOneDoc(def, project.name, project.idea, project.config as ProjectConfig, projectId);
-    insertDoc({ ...doc, packageVersionId: version.id, packageVersionNumber: version.versionNumber });
+    const doc = await generateOneDocBundle(def, project.name, project.idea, project.config as ProjectConfig, projectId);
+    insertDocumentBundle({ ...doc, packageVersionId: version.id, packageVersionNumber: version.versionNumber });
     updatePackageVersionStatus(version.id, "ready");
     db.update(projects).set({ status: "ready", updatedAt: new Date() }).where(eq(projects.id, projectId)).run();
   } catch (err) {
@@ -367,14 +485,21 @@ export function recoverStuckProjects() {
       .where(eq(documents.projectId, p.id))
       .orderBy(asc(documents.createdAt))
       .all();
+    // Count only parent documents (exclude bundle-section rows) when deciding
+    // readiness: each parent document now persists multiple bundle-section
+    // child rows, so a raw docs.length could reach DOC_DEFINITIONS.length even
+    // when only a subset of parent docs were generated. This mirrors the
+    // parent-only count used in projects.list / projects.status / projects.get
+    // (filter artifactType !== "bundle-section").
+    const parentDocCount = docs.filter((d) => d.artifactType !== "bundle-section").length;
     db.update(projects)
       .set({
-        status: docs.length >= DOC_DEFINITIONS.length ? "ready" : "failed",
+        status: parentDocCount >= DOC_DEFINITIONS.length ? "ready" : "failed",
         updatedAt: new Date(),
       })
       .where(eq(projects.id, p.id))
       .run();
-    if (docs.length < DOC_DEFINITIONS.length) {
+    if (parentDocCount < DOC_DEFINITIONS.length) {
       recordRun({
         projectId: p.id,
         kind: "job",

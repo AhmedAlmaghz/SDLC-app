@@ -1,111 +1,70 @@
 import { DOC_DEFINITIONS, type GeneratedDoc, type ProjectDetail } from "@contracts/types";
-
-export interface SplitDocumentPart {
-    fileName: string;
-    title: string;
-    content: string;
-}
+import {
+    bundleAsMarkdown,
+    documentBundleFiles,
+    folderNameForDocument,
+    markdownToSingleSectionBundle,
+    parseDocumentBundle,
+    safePathSegment,
+} from "@contracts/documentBundle";
 
 export interface ExportDocumentBundle {
     folderName: string;
     indexFileName: string;
     indexContent: string;
-    parts: SplitDocumentPart[];
+    parts: Array<{ fileName: string; title: string; content: string }>;
 }
 
-const DEFAULT_MAX_PART_CHARS = 14_000;
-const MIN_SPLIT_REMAINDER = 2_000;
+export { safePathSegment };
 
-function stripMarkdownExtension(fileName: string): string {
-    return fileName.replace(/\.md$/i, "");
+export function getDocBundle(doc: GeneratedDoc, project: ProjectDetail) {
+    const parsed = doc.artifactType === "bundle" ? parseDocumentBundle(doc.content) : null;
+    if (parsed) return parsed;
+    const def = DOC_DEFINITIONS.find((item) => item.key === doc.key);
+    if (!def) return null;
+    return markdownToSingleSectionBundle({
+        def,
+        title: doc.title,
+        language: project.docLanguage,
+        content: doc.content,
+        projectName: project.name,
+        versionLabel: project.currentVersion?.label ?? `v${doc.packageVersionNumber}`,
+        source: doc.source,
+        model: doc.model,
+        generatedAt: doc.createdAt,
+    });
 }
 
-export function safePathSegment(value: string, fallback = "package"): string {
-    const segment = value
-        .trim()
-        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
-        .replace(/\s+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "")
-        .slice(0, 90);
-    return segment || fallback;
-}
-
-function headingForPart(content: string, partNumber: number): string {
-    const heading = content.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
-    return heading || `Part ${partNumber}`;
-}
-
-function findSplitPoint(content: string, maxChars: number): number {
-    if (content.length <= maxChars + MIN_SPLIT_REMAINDER) return content.length;
-
-    const windowStart = Math.max(Math.floor(maxChars * 0.55), 1);
-    const window = content.slice(windowStart, maxChars);
-    const headingMatches = [...window.matchAll(/\n(?=#{2,3}\s+)/g)];
-    const headingPoint = headingMatches.at(-1)?.index;
-    if (headingPoint != null) return windowStart + headingPoint + 1;
-
-    const paragraphPoint = window.lastIndexOf("\n\n");
-    if (paragraphPoint > -1) return windowStart + paragraphPoint + 2;
-
-    const linePoint = window.lastIndexOf("\n");
-    if (linePoint > -1) return windowStart + linePoint + 1;
-
-    return maxChars;
-}
-
-export function splitMarkdownDocument(content: string, maxChars = DEFAULT_MAX_PART_CHARS): SplitDocumentPart[] {
-    const normalized = content.trim();
-    if (!normalized) return [{ fileName: "PART-01.md", title: "Part 1", content: "" }];
-    if (normalized.length <= maxChars) return [{ fileName: "PART-01.md", title: headingForPart(normalized, 1), content: normalized }];
-
-    const parts: SplitDocumentPart[] = [];
-    let remaining = normalized;
-    while (remaining.length) {
-        const partNumber = parts.length + 1;
-        const splitPoint = findSplitPoint(remaining, maxChars);
-        const chunk = remaining.slice(0, splitPoint).trim();
-        parts.push({
-            fileName: `PART-${String(partNumber).padStart(2, "0")}.md`,
-            title: headingForPart(chunk, partNumber),
-            content: chunk,
-        });
-        remaining = remaining.slice(splitPoint).trim();
-    }
-    return parts;
+export function docMarkdownForDisplay(doc: GeneratedDoc, project: ProjectDetail): string {
+    const bundle = getDocBundle(doc, project);
+    if (bundle) return bundleAsMarkdown(bundle);
+    return doc.content;
 }
 
 export function buildDocumentBundle(doc: GeneratedDoc, project: ProjectDetail): ExportDocumentBundle {
     const def = DOC_DEFINITIONS.find((item) => item.key === doc.key);
-    const parts = splitMarkdownDocument(doc.content).map((part, index) => ({
-        ...part,
-        fileName: `PART-${String(index + 1).padStart(2, "0")}.md`,
-    }));
-    const folderName = safePathSegment(stripMarkdownExtension(doc.fileName), doc.key);
-    const versionLabel = project.currentVersion?.label ?? `v${doc.packageVersionNumber}`;
-    const lines = [
-        `# ${doc.title} Index`,
-        "",
-        `- Project: ${project.name}`,
-        `- Package version: ${versionLabel}`,
-        `- Source document: ${doc.fileName}`,
-        `- Document key: ${doc.key}`,
-        `- Source: ${doc.source}${doc.model ? ` (${doc.model})` : ""}`,
-        `- Parts: ${parts.length}`,
-        def ? `- Package role: ${def.titleEn}` : null,
-        "",
-        "## Parts",
-        "",
-        ...parts.map((part, index) => `| ${index + 1} | ${part.fileName} | ${part.title.replace(/\|/g, "-")} |`),
-    ].filter((line): line is string => line != null);
+    const bundle = getDocBundle(doc, project);
+    if (!bundle) {
+        return {
+            folderName: safePathSegment(doc.bundleFolderName || doc.fileName.replace(/\.md$/i, ""), doc.key),
+            indexFileName: "INDEX.md",
+            indexContent: doc.content,
+            parts: [{ fileName: doc.fileName, title: doc.title, content: doc.content }],
+        };
+    }
 
-    lines.splice(lines.indexOf("## Parts") + 2, 0, "| # | File | Starts with |", "|---|---|---|");
-
+    const files = documentBundleFiles(bundle);
+    const index = files.find((file) => file.kind === "index");
+    const sectionFiles = files.filter((file) => file.kind === "section");
     return {
-        folderName,
-        indexFileName: "INDEX.md",
-        indexContent: `${lines.join("\n")}\n`,
-        parts,
+        folderName: doc.bundleFolderName || bundle.metadata.folderName || (def ? folderNameForDocument(def) : safePathSegment(doc.title, doc.key)),
+        indexFileName: index?.fileName ?? "INDEX.md",
+        indexContent: index?.content ?? bundle.indexContent,
+        parts: sectionFiles.map((file, index) => ({
+            fileName: file.fileName,
+            title: bundle.sections[index]?.title ?? file.fileName.replace(/\.md$/i, ""),
+            content: file.content,
+        })),
     };
 }
 

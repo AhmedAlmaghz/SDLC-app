@@ -20,7 +20,7 @@ import { DOC_DEFINITIONS, type DocKey, type DocSource, type PackageChangeType, t
 import { trpc } from "@/providers/trpc";
 import IdeaWizard from "@/components/IdeaWizard";
 import MarkdownView from "@/components/MarkdownView";
-import { buildDocumentBundle, packageVersionFolder } from "@/lib/packageExport";
+import { buildDocumentBundle, docMarkdownForDisplay, packageVersionFolder } from "@/lib/packageExport";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -118,9 +118,11 @@ export default function ProjectDetail() {
   const isVersionInFlight = versionStatus === "queued" || versionStatus === "generating" || versionStatus === "updating" || project.status === "generating";
   const versionContext = currentVersion ? CHANGE_TYPE_LABELS[currentVersion.changeType] : "توليد";
 
+  const activeDocMarkdown = activeDoc ? docMarkdownForDisplay(activeDoc, project) : "";
+
   const copyDoc = async () => {
     if (!activeDoc) return;
-    await navigator.clipboard.writeText(activeDoc.content);
+    await navigator.clipboard.writeText(activeDocMarkdown);
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
     toast.success("نُسخت الوثيقة");
@@ -128,9 +130,11 @@ export default function ProjectDetail() {
 
   const downloadDoc = () => {
     if (!activeDoc) return;
+    const bundle = buildDocumentBundle(activeDoc, project);
+    const text = [bundle.indexContent.trim(), ...bundle.parts.map((part) => part.content.trim())].filter(Boolean).join("\n\n---\n\n");
     downloadBlob(
-      new Blob([activeDoc.content], { type: "text/markdown;charset=utf-8" }),
-      activeDoc.fileName,
+      new Blob([text], { type: "text/markdown;charset=utf-8" }),
+      `${bundle.folderName}.md`,
     );
   };
 
@@ -144,7 +148,7 @@ export default function ProjectDetail() {
       const versionLabel = project.currentVersion?.label ?? "v1";
       folder.file(
         "README.md",
-        `# حزمة توثيق ${project.name}\n\n- Version: ${versionLabel}\n- Documents: ${docs.length}/${project.totalDocs}\n\n${project.idea}\n\n---\nولّدها مِرْوَر وفق إطار «The New SDLC with Vibe Coding».\nكل وثيقة كبيرة محفوظة داخل مجلدها مع ملف INDEX.md وقائمة أجزاء مرتبة.\n`,
+        `# حزمة توثيق ${project.name}\n\n- Version: ${versionLabel}\n- Documents: ${docs.length}/${project.totalDocs}\n\n${project.idea}\n\n---\nولّدها مِرْوَر وفق إطار «The New SDLC with Vibe Coding».\nكل وثيقة محفوظة داخل مجلدها مع ملف INDEX.md وروابط نسبية إلى ملفات الأقسام المرتبة.\n`,
       );
       for (const d of docs) {
         const bundle = buildDocumentBundle(d, project);
@@ -438,11 +442,11 @@ export default function ProjectDetail() {
               </div>
               {activeDef && (
                 <p className="border-b border-border bg-secondary/30 px-6 py-2.5 text-xs leading-5 text-muted-foreground">
-                  {activeDef.descriptionAr} — <span className="font-mono">{activeDef.fileName}</span>
+                  {activeDef.descriptionAr} — <span className="font-mono">{activeDoc.bundleFolderName ?? activeDef.fileName}/INDEX.md</span>
                 </p>
               )}
               <div className="px-6 py-6 sm:px-8">
-                <MarkdownView content={activeDoc.content} />
+                <MarkdownView content={activeDocMarkdown} />
               </div>
             </div>
           ) : (

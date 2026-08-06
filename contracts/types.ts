@@ -263,6 +263,7 @@ export const CODE_AGENT_LABELS: Record<PreferredCodeAgent, string> = {
 
 export type ProjectStatus = "draft" | "generating" | "ready" | "failed";
 export type DocSource = "ai" | "template" | "ai-fallback";
+export type DocumentArtifactType = "markdown" | "bundle" | "bundle-section";
 
 export interface ProjectSummary {
   id: string;
@@ -300,10 +301,16 @@ export interface GeneratedDoc {
   title: string;
   fileName: string;
   content: string;
+  artifactType: DocumentArtifactType;
   source: DocSource;
   model: string | null;
   packageVersionId: string | null;
   packageVersionNumber: number;
+  bundleFolderName: string | null;
+  relativePath: string;
+  sectionOrder: number | null;
+  parentDocumentId: string | null;
+  sections?: GeneratedDoc[];
   createdAt: Date;
 }
 

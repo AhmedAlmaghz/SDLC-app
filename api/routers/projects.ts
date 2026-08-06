@@ -116,7 +116,17 @@ export const projectsRouter = createRouter({
     const allVersions = db.select().from(packageVersions).all();
     return rows.map((r) => {
       const currentVersion = latestVersionNumber(allVersions, r.id);
-      return toSummary(r, allDocs.filter((d) => d.projectId === r.id && d.packageVersionNumber === currentVersion).length);
+      // Count only parent documents (exclude bundle-section rows) so docsCount
+      // never exceeds totalDocs (DOC_DEFINITIONS.length). See projects.get.
+      return toSummary(
+        r,
+        allDocs.filter(
+          (d) =>
+            d.projectId === r.id &&
+            d.packageVersionNumber === currentVersion &&
+            d.artifactType !== "bundle-section",
+        ).length,
+      );
     });
   }),
 
@@ -149,21 +159,41 @@ export const projectsRouter = createRouter({
         .all();
 
       const order = new Map(DOC_KEYS.map((k, i) => [k, i]));
+      const toGeneratedDoc = (d: (typeof docRows)[number], sections: GeneratedDoc[] = []): GeneratedDoc => ({
+        id: d.id,
+        projectId: d.projectId,
+        key: d.key as GeneratedDoc["key"],
+        title: d.title,
+        fileName: d.fileName,
+        content: d.content,
+        artifactType: (d.artifactType ?? "markdown") as GeneratedDoc["artifactType"],
+        source: d.source as GeneratedDoc["source"],
+        model: d.model,
+        packageVersionId: d.packageVersionId,
+        packageVersionNumber: d.packageVersionNumber,
+        bundleFolderName: d.bundleFolderName,
+        relativePath: d.relativePath || d.fileName,
+        sectionOrder: d.sectionOrder,
+        parentDocumentId: d.parentDocumentId,
+        sections,
+        createdAt: d.createdAt,
+      });
+      const sectionRowsByParent = new Map<string, typeof docRows>();
+      for (const row of docRows.filter((d) => d.artifactType === "bundle-section" && d.parentDocumentId)) {
+        const parentId = row.parentDocumentId as string;
+        const rows = sectionRowsByParent.get(parentId) ?? [];
+        rows.push(row);
+        sectionRowsByParent.set(parentId, rows);
+      }
       const docs: GeneratedDoc[] = docRows
+        .filter((d) => d.artifactType !== "bundle-section")
         .sort((a, b) => (order.get(a.key as (typeof DOC_KEYS)[number]) ?? 99) - (order.get(b.key as (typeof DOC_KEYS)[number]) ?? 99))
-        .map((d) => ({
-          id: d.id,
-          projectId: d.projectId,
-          key: d.key as GeneratedDoc["key"],
-          title: d.title,
-          fileName: d.fileName,
-          content: d.content,
-          source: d.source as GeneratedDoc["source"],
-          model: d.model,
-          packageVersionId: d.packageVersionId,
-          packageVersionNumber: d.packageVersionNumber,
-          createdAt: d.createdAt,
-        }));
+        .map((d) => {
+          const sections = (sectionRowsByParent.get(d.id) ?? [])
+            .sort((a, b) => (a.sectionOrder ?? 0) - (b.sectionOrder ?? 0))
+            .map((section) => toGeneratedDoc(section));
+          return toGeneratedDoc(d, sections);
+        });
 
       const metrics: RunMetric[] = runRows.map((r) => ({
         id: r.id,
@@ -269,7 +299,9 @@ export const projectsRouter = createRouter({
       .from(documents)
       .where(eq(documents.projectId, input.id))
       .all()
-      .filter((d) => d.packageVersionNumber === latestVersion).length;
+      // Count only parent documents (exclude bundle-section rows) so docsCount
+      // never exceeds totalDocs (DOC_DEFINITIONS.length). See projects.get.
+      .filter((d) => d.packageVersionNumber === latestVersion && d.artifactType !== "bundle-section").length;
     return {
       status: row.status as ProjectStatus,
       docsCount,

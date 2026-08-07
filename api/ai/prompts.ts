@@ -6,7 +6,7 @@ import {
   CODE_AGENT_LABELS,
   type DocDefinition,
   type ProjectConfig,
-} from "@contracts/types";
+} from "../../contracts/types.js";
 
 export const SYSTEM_PROMPT = `You are a principal software architect and agentic-engineering expert writing a production-grade documentation package that will feed "vibe coding" AI agents.
 

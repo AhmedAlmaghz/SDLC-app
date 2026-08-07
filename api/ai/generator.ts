@@ -1,20 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { generateText } from "ai";
 import { asc, eq, max } from "drizzle-orm";
-import { DOC_DEFINITIONS, type DocKey, type ProjectConfig } from "@contracts/types";
+import { DOC_DEFINITIONS, type DocKey, type ProjectConfig } from "../../contracts/types.js";
 import {
   createDocumentBundle,
   deriveSectionPlan,
   serializeDocumentBundle,
   type DocumentBundleArtifact,
   type DocumentSectionPlan,
-} from "@contracts/documentBundle";
-import { getDb } from "../queries/connection";
-import { documents, packageVersions, projects, runs } from "@db/schema";
-import { SYSTEM_PROMPT } from "./prompts";
-import { generateFromTemplate } from "./templates";
-import { getModel, resolveAiConfig } from "./provider";
-import { buildSectionPrompt } from "./sectionPrompts";
+} from "../../contracts/documentBundle.js";
+import { getDb } from "../queries/connection.js";
+import { documents, packageVersions, projects, runs } from "../../db/schema.js";
+import { SYSTEM_PROMPT } from "./prompts.js";
+import { generateFromTemplate } from "./templates.js";
+import { getModel, resolveAiConfig } from "./provider.js";
+import { buildSectionPrompt } from "./sectionPrompts.js";
 
 /**
  * منسّق التوليد — «نموذج المصنع» عملياً:

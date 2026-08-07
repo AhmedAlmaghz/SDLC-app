@@ -12,11 +12,11 @@ import {
   type RunMetric,
   type PackageVersion,
   type AiSettingsFullView,
-} from "@contracts/types";
-import { createRouter, publicQuery } from "../middleware";
-import { getDb } from "../queries/connection";
-import { documents, packageVersions, projects, runs } from "@db/schema";
-import { isGenerating, regenerateSingleDoc, runGeneration, updateProjectInputs } from "../ai/generator";
+} from "../../contracts/types.js";
+import { createRouter, publicQuery } from "../middleware.js";
+import { getDb } from "../queries/connection.js";
+import { documents, packageVersions, projects, runs } from "../../db/schema.js";
+import { isGenerating, regenerateSingleDoc, runGeneration, updateProjectInputs } from "../ai/generator.js";
 import {
   AI_PROVIDER_DEFINITIONS,
   AI_PROVIDER_IDS,
@@ -29,7 +29,7 @@ import {
   saveAiConfig,
   setActiveSavedProvider,
   updateSavedProvider,
-} from "../ai/provider";
+} from "../ai/provider.js";
 
 const configSchema = z.object({
   appType: z.enum(["web", "mobile", "api", "desktop", "cli", "aiAgent", "other"]),

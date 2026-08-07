@@ -6,10 +6,10 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { desc, eq } from "drizzle-orm";
 import type { LanguageModel } from "ai";
-import { env } from "../lib/env";
-import { getDb } from "../queries/connection";
-import { providerSettings, settings } from "@db/schema";
-import type { SavedProvider, SavedProviderInput } from "@contracts/types";
+import { env } from "../lib/env.js";
+import { getDb } from "../queries/connection.js";
+import { providerSettings, settings } from "../../db/schema.js";
+import type { SavedProvider, SavedProviderInput } from "../../contracts/types.js";
 
 const SETTINGS_ID = "singleton";
 

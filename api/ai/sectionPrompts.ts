@@ -1,6 +1,6 @@
-import { DEFAULT_SECTION_PURPOSE, type DocumentSectionPlan } from "@contracts/documentBundle";
-import type { DocDefinition, ProjectConfig } from "@contracts/types";
-import { projectBrief } from "./prompts";
+import { DEFAULT_SECTION_PURPOSE, type DocumentSectionPlan } from "../../contracts/documentBundle.js";
+import type { DocDefinition, ProjectConfig } from "../../contracts/types.js";
+import { projectBrief } from "./prompts.js";
 
 export function buildSectionPrompt(input: {
     def: DocDefinition;

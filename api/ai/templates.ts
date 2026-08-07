@@ -8,7 +8,7 @@ import {
   type AppType,
   type DocKey,
   type ProjectConfig,
-} from "@contracts/types";
+} from "../../contracts/types.js";
 
 /**
  * محرك القوالب الهندسي — يولّد حزمة توثيق كاملة ومنظمة دون نموذج ذكاء اصطناعي.

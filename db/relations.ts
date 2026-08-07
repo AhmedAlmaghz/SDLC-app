@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { documents, packageVersions, projects, runs } from "./schema";
+import { documents, packageVersions, projects, runs } from "./schema.js";
 
 /**
  * Drizzle relation declarations.

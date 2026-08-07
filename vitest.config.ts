@@ -24,6 +24,6 @@ export default defineConfig({
     // worker test context on some Windows + Node 24 setups (the `describe` API
     // throws "Cannot read properties of undefined (reading 'config')").
     pool: "vmThreads",
-    include: ["api/**/*.test.ts", "api/**/*.spec.ts", "src/**/*.test.ts", "src/**/*.spec.ts"],
+    include: ["tests/**/*.test.ts", "tests/**/*.spec.ts", "src/**/*.test.ts", "src/**/*.spec.ts"],
   },
 });

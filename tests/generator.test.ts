@@ -62,7 +62,7 @@ vi.mock("ai", () => ({ generateText: generateTextMock }));
 // Mock the provider so resolveAiConfig() reflects our controllable `configured`
 // flag, and getModel() returns a placeholder model object (only used on the AI
 // path, which is covered by generateTextMock above).
-vi.mock("./provider", () => ({
+vi.mock("../api/ai/provider", () => ({
     resolveAiConfig: () => ({
         configured: aiConfigState.configured,
         provider: "openai-compatible",
@@ -78,8 +78,8 @@ vi.mock("./provider", () => ({
 }));
 
 // --- Now import app modules (env + mock are in place). ---
-import { runGeneration, recoverStuckProjects } from "./generator";
-import { getDb } from "../queries/connection";
+import { runGeneration, recoverStuckProjects } from "../api/ai/generator";
+import { getDb } from "../api/queries/connection";
 import { documents, packageVersions, projects } from "@db/schema";
 import { DOC_DEFINITIONS, type ProjectConfig } from "@contracts/types";
 import { eq } from "drizzle-orm";

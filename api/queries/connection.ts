@@ -6,9 +6,9 @@ import pg from "pg";
 import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
-import { env } from "../lib/env";
-import * as sqliteSchema from "@db/schema";
-import * as pgSchema from "@db/schema.pg";
+import { env } from "../lib/env.js";
+import * as sqliteSchema from "../../db/schema.js";
+import * as pgSchema from "../../db/schema.pg.js";
 
 /**
  * طبقة اتصال مزدوجة المحرك:

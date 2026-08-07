@@ -1,4 +1,4 @@
-import type { DocDefinition, DocKey, DocLanguage, DocSource } from "./types";
+import type { DocDefinition, DocKey, DocLanguage, DocSource } from "./types.js";
 
 export const DOCUMENT_BUNDLE_SCHEMA_VERSION = 1;
 export const DOCUMENT_BUNDLE_INDEX_FILE = "INDEX.md";

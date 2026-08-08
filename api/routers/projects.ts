@@ -223,7 +223,7 @@ export const projectsRouter = createRouter({
     .input(
       z.object({
         name: z.string().min(1, "اسم المشروع مطلوب").max(120),
-        idea: z.string().min(20, "صف فكرتك في 20 حرفاً على الأقل").max(20000),
+        idea: z.string().min(20, "صف فكرتك في 20 حرفاً على الأقل").max(1000000),
         config: configSchema,
       }),
     )
@@ -250,7 +250,7 @@ export const projectsRouter = createRouter({
       z.object({
         id: z.string().min(1),
         name: z.string().min(1).max(120).optional(),
-        idea: z.string().min(20).max(20000).optional(),
+        idea: z.string().min(20).max(1000000).optional(),
         config: configSchema.optional(),
         changeSummary: z.string().max(500).optional(),
       }),

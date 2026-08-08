@@ -104,6 +104,7 @@ export default function Layout() {
           <p className="font-mono" dir="ltr">
             Spec → Agent → Verify
           </p>
+          <p>Powered by <a href="https://github.com/AhmedAlmaghz/SDLC-app" target="blank">eng. Ahmed Almaghz</a> - 2026</p>
         </div>
       </footer>
     </div>

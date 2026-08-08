@@ -250,7 +250,7 @@ async function generateSectionWithAi(input: {
       model,
       system: SYSTEM_PROMPT,
       prompt: buildSectionPrompt(input),
-      maxOutputTokens: input.def.complexity === "high" ? 4500 : 3500,
+      maxOutputTokens: input.def.complexity === "high" ? 13500 : 10500,
     });
     return {
       content: result.text.trim(),

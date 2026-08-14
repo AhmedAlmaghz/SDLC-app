@@ -11,6 +11,7 @@ import {
   Gauge,
   Loader2,
   Pencil,
+  Play,
   RefreshCw,
   TriangleAlert,
 } from "lucide-react";
@@ -88,6 +89,12 @@ export default function ProjectDetail() {
       setPendingDocKey(null);
       toast.error("تعذّرت إعادة التوليد");
     },
+  });
+
+  // إستئناف التوليد المتعذّر: يستكمل الوثائق الناقصة من حيث توقف.
+  const resumeMutation = trpc.projects.resume.useMutation({
+    onSuccess: () => void utils.projects.get.invalidate({ id }),
+    onError: () => toast.error("تعذّر استئناف التوليد"),
   });
 
   const docs = useMemo(() => project?.docs ?? [], [project?.docs]);
@@ -254,11 +261,29 @@ export default function ProjectDetail() {
           {project.status === "failed" && (
             <div className="mt-5 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-red-300">
               <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
-              <div className="space-y-2">
+              <div className="min-w-0 flex-1 space-y-2">
                 <p>
                   تعذّر إكمال التوليد ({project.docsCount}/{project.totalDocs} وثيقة). لم يتم استبدال فشل مزوّد
                   الذكاء الاصطناعي بقوالب صامتة.
                 </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={resumeMutation.isPending || isVersionInFlight}
+                    onClick={() => resumeMutation.mutate({ id })}
+                  >
+                    {resumeMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                    {resumeMutation.isPending ? "جارٍ الاستئناف…" : "إستئناف"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    يستكمل توليد الوثائق الناقصة من حيث توقف، دون إعادة توليد المكتملة.
+                  </span>
+                </div>
                 {project.metrics.find((m) => m.status === "error")?.detail && (
                   <pre dir="ltr" className="whitespace-pre-wrap rounded-lg bg-background/70 p-3 font-mono text-xs text-red-200">
                     {project.metrics.find((m) => m.status === "error")?.detail}

@@ -78,7 +78,7 @@ vi.mock("../api/ai/provider", () => ({
 }));
 
 // --- Now import app modules (env + mock are in place). ---
-import { runGeneration, recoverStuckProjects } from "../api/ai/generator";
+import { runGeneration, recoverStuckProjects, resumeGeneration } from "../api/ai/generator";
 import { getDb } from "../api/queries/connection";
 import { documents, packageVersions, projects } from "@db/schema";
 import { DOC_DEFINITIONS, type ProjectConfig } from "@contracts/types";
@@ -352,6 +352,144 @@ describe("recoverStuckProjects — parent-only doc count", () => {
         recoverStuckProjects();
 
         const project = db.select().from(projects).where(eq(projects.id, projectId)).all()[0];
+        expect(project?.status).toBe("ready");
+    });
+});
+
+describe("resumeGeneration — continue from where generation stopped", () => {
+    // Helper: seed a full parent bundle row (+ sections) for a single doc key in
+    // a given version, exactly like insertDocumentBundle persists (source template).
+    function seedParentWithSections(args: {
+        projectId: string;
+        packageVersionId: string;
+        packageVersionNumber: number;
+        key: string;
+        sectionCount: number;
+    }) {
+        const db = getDb();
+        const parentId = randomUUID();
+        db.insert(documents)
+            .values({
+                id: parentId,
+                projectId: args.projectId,
+                packageVersionId: args.packageVersionId,
+                packageVersionNumber: args.packageVersionNumber,
+                key: args.key,
+                title: args.key,
+                fileName: `INDEX-${args.key}.md`,
+                content: `# ${args.key}`,
+                artifactType: "bundle",
+                bundleFolderName: args.key,
+                relativePath: "INDEX.md",
+                sectionOrder: 0,
+                source: "template",
+                model: null,
+            })
+            .run();
+        for (let i = 1; i <= args.sectionCount; i++) {
+            db.insert(documents)
+                .values({
+                    id: randomUUID(),
+                    projectId: args.projectId,
+                    packageVersionId: args.packageVersionId,
+                    packageVersionNumber: args.packageVersionNumber,
+                    key: args.key,
+                    title: `${args.key} section ${i}`,
+                    fileName: `${args.key}-section-${i}.md`,
+                    content: `# Section ${i}`,
+                    artifactType: "bundle-section",
+                    bundleFolderName: args.key,
+                    relativePath: `${args.key}-section-${i}.md`,
+                    sectionOrder: i,
+                    parentDocumentId: parentId,
+                    source: "template",
+                    model: null,
+                })
+                .run();
+        }
+    }
+
+    it("completes only the missing docs inside the same (failed) version and marks the project ready", async () => {
+        setAiConfigured(true);
+        resetCallCount();
+        const db = getDb();
+        const pid = insertProject();
+
+        // A failed v1 that already contains exactly half the parent docs.
+        const versionId = randomUUID();
+        db.insert(packageVersions)
+            .values({
+                id: versionId,
+                projectId: pid,
+                versionNumber: 1,
+                label: "v1",
+                status: "failed",
+                changeType: "initial_generation",
+            })
+            .run();
+
+        const subsetCount = Math.max(1, Math.floor(DOC_DEFINITIONS.length / 2));
+        const preGenerated = DOC_DEFINITIONS.slice(0, subsetCount);
+        for (const def of preGenerated) {
+            seedParentWithSections({
+                projectId: pid,
+                packageVersionId: versionId,
+                packageVersionNumber: 1,
+                key: def.key,
+                sectionCount: 2,
+            });
+        }
+        db.update(projects).set({ status: "failed", updatedAt: new Date() }).where(eq(projects.id, pid)).run();
+
+        await resumeGeneration(pid);
+
+        const allDocs = db.select().from(documents).where(eq(documents.projectId, pid)).all();
+        const parentRows = allDocs.filter((d) => d.artifactType === "bundle");
+
+        // Every doc definition now has a parent row.
+        expect(parentRows).toHaveLength(DOC_DEFINITIONS.length);
+
+        // Resume continues inside the SAME version — no new version created.
+        for (const parent of parentRows) {
+            expect(parent.packageVersionId).toBe(versionId);
+        }
+
+        // Only the missing definitions were handed to the AI provider.
+        const aiGeneratedKeys = new Set(DOC_DEFINITIONS.slice(subsetCount).map((d) => d.key));
+        for (const parent of parentRows) {
+            if (aiGeneratedKeys.has(parent.key as (typeof DOC_DEFINITIONS)[number]["key"])) {
+                expect(parent.source).toBe("ai");
+            }
+        }
+        expect(getCallCount()).toBeGreaterThan(0);
+
+        // The project is ready and the version is completed.
+        const project = db.select().from(projects).where(eq(projects.id, pid)).all()[0];
+        expect(project?.status).toBe("ready");
+        const version = db.select().from(packageVersions).where(eq(packageVersions.id, versionId)).all()[0];
+        expect(version?.status).toBe("ready");
+    });
+
+    it("generates a fresh continuation version when nothing exists yet", async () => {
+        setAiConfigured(true);
+        resetCallCount();
+        const pid = insertProject();
+
+        // No version rows at all — resume must bootstrap a new version and fill every doc.
+        await resumeGeneration(pid);
+
+        const db = getDb();
+        const parentRows = db
+            .select()
+            .from(documents)
+            .where(eq(documents.projectId, pid))
+            .all()
+            .filter((d) => d.artifactType === "bundle");
+        expect(parentRows).toHaveLength(DOC_DEFINITIONS.length);
+
+        const version = db.select().from(packageVersions).where(eq(packageVersions.projectId, pid)).all()[0];
+        expect(version?.status).toBe("ready");
+        const project = db.select().from(projects).where(eq(projects.id, pid)).all()[0];
         expect(project?.status).toBe("ready");
     });
 });

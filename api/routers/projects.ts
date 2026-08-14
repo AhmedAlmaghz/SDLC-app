@@ -16,7 +16,7 @@ import {
 import { createRouter, publicQuery } from "../middleware.js";
 import { getDb } from "../queries/connection.js";
 import { documents, packageVersions, projects, runs } from "../../db/schema.js";
-import { isGenerating, regenerateSingleDoc, runGeneration, updateProjectInputs } from "../ai/generator.js";
+import { isGenerating, regenerateSingleDoc, resumeGeneration, runGeneration, updateProjectInputs } from "../ai/generator.js";
 import {
   AI_PROVIDER_DEFINITIONS,
   AI_PROVIDER_IDS,
@@ -269,6 +269,14 @@ export const projectsRouter = createRouter({
     .input(z.object({ id: z.string().min(1), key: z.enum(DOC_KEYS as [string, ...string[]]), changeSummary: z.string().max(500).optional() }))
     .mutation(async ({ input }) => {
       await regenerateSingleDoc(input.id, input.key as (typeof DOC_KEYS)[number], input.changeSummary);
+      return { ok: true };
+    }),
+
+  // يستأنف توليد مشروع متعذّر جزئياً من حيث توقف دون إعادة توليد المكتمل.
+  resume: publicQuery
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(({ input }) => {
+      void resumeGeneration(input.id);
       return { ok: true };
     }),
 

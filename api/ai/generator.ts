@@ -354,6 +354,33 @@ async function generateOneDocBundle(
   return { projectId, key: def.key, title: tpl.title, fileName: bundle.metadata.indexFileName, bundle, source: "template" as const, model: null };
 }
 
+/**
+ * يولّد ويُثبّت حزمة مستندات لقائمة من التعريفات داخل إصدار محدد.
+ * مساعدة مشتركة بين runGeneration وresumeGeneration لتجنّب تكرار المنطق (DRY).
+ */
+async function generateAndPersistDocs(
+  projectId: string,
+  name: string,
+  idea: string,
+  config: ProjectConfig,
+  version: { id: string; versionNumber: number },
+  defs: (typeof DOC_DEFINITIONS)[number][],
+) {
+  const db = getDb();
+  for (const def of defs) {
+    const doc = await generateOneDocBundle(def, name, idea, config, projectId);
+    insertDocumentBundle({
+      ...doc,
+      packageVersionId: version.id,
+      packageVersionNumber: version.versionNumber,
+    });
+    db.update(projects)
+      .set({ updatedAt: new Date() })
+      .where(eq(projects.id, projectId))
+      .run();
+  }
+}
+
 export async function runGeneration(
   projectId: string,
   options: { changeType?: PackageChangeType; changeSummary?: string } = {},
@@ -385,18 +412,7 @@ export async function runGeneration(
       status: "generating",
     });
 
-    for (const def of DOC_DEFINITIONS) {
-      const doc = await generateOneDocBundle(def, project.name, project.idea, config, projectId);
-      insertDocumentBundle({
-        ...doc,
-        packageVersionId: version.id,
-        packageVersionNumber: version.versionNumber,
-      });
-      db.update(projects)
-        .set({ updatedAt: new Date() })
-        .where(eq(projects.id, projectId))
-        .run();
-    }
+    await generateAndPersistDocs(projectId, project.name, project.idea, config, version, DOC_DEFINITIONS);
 
     updatePackageVersionStatus(version.id, "ready");
     db.update(projects)
@@ -409,6 +425,98 @@ export async function runGeneration(
       kind: "job",
       status: "error",
       detail: err instanceof Error ? err.message.slice(0, 500) : String(err),
+    });
+    const failedVersion = latestPackageVersion(projectId);
+    if (failedVersion?.status !== "ready") updatePackageVersionStatus(failedVersion.id, "failed");
+    db.update(projects)
+      .set({ status: "failed", updatedAt: new Date() })
+      .where(eq(projects.id, projectId))
+      .run();
+  } finally {
+    activeJobs.delete(projectId);
+  }
+}
+
+/**
+ * يُستأنف توليد مشروع متعذّر جزئياً من حيث توقف.
+ * أفضل الممارسات المطبَّقة:
+ *  - يستكمل في الإصدار الحالي (المتعذّر) بدل تكاثر الإصدارات.
+ *  - يتخطّى الوثائق المكتملة فعلاً (idempotent) فلا يُعيد إنفاق الرموز/التكلفة.
+ *  - يحرس ضد التنفيذ المتزامن عبر activeJobs مثل بقية المسارات.
+ */
+export async function resumeGeneration(projectId: string): Promise<void> {
+  if (activeJobs.has(projectId)) return;
+  activeJobs.add(projectId);
+
+  const db = getDb();
+  try {
+    const project = db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1)
+      .all()[0];
+    if (!project) return;
+
+    // استكمل في أحدث إصدار — عادةً هو الإصدار الذي تعذّر جزئياً. نُنشئ إصداراً
+    // جديداً فقط عند عدم وجود إصدار أو اكتماله نهائياً (لا شيء ليُستأنف فيه).
+    const latest = latestPackageVersion(projectId);
+    const version =
+      latest && latest.status !== "ready"
+        ? latest
+        : createPackageVersion(projectId, {
+            changeType:
+              latest?.changeType === "initial_generation"
+                ? "full_regeneration"
+                : (latest?.changeType as PackageChangeType) || "full_regeneration",
+            changeSummary: latest ? `Resumed after "${latest.label}"` : "Resumed initial generation",
+            createdFromVersionNumber: latest?.versionNumber ?? null,
+            status: "generating",
+          });
+
+    db.update(projects)
+      .set({ status: "generating", updatedAt: new Date() })
+      .where(eq(projects.id, projectId))
+      .run();
+    updatePackageVersionStatus(version.id, "generating");
+
+    // حدّد الوثائق الناقصة: نستثني التعريفات التي سبق إنشاء صفّها الرئيسي
+    // (artifactType === "bundle") داخل هذا الإصدار بالذات.
+    const existingKeys = new Set(
+      db
+        .select({
+          key: documents.key,
+          artifactType: documents.artifactType,
+          packageVersionNumber: documents.packageVersionNumber,
+        })
+        .from(documents)
+        .where(eq(documents.projectId, projectId))
+        .all()
+        .filter((d) => d.artifactType === "bundle" && d.packageVersionNumber === version.versionNumber)
+        .map((d) => d.key),
+    );
+
+    const missing = DOC_DEFINITIONS.filter((def) => !existingKeys.has(def.key));
+    await generateAndPersistDocs(
+      projectId,
+      project.name,
+      project.idea,
+      project.config as ProjectConfig,
+      version,
+      missing,
+    );
+
+    updatePackageVersionStatus(version.id, "ready");
+    db.update(projects)
+      .set({ status: "ready", updatedAt: new Date() })
+      .where(eq(projects.id, projectId))
+      .run();
+  } catch (err) {
+    recordRun({
+      projectId,
+      kind: "job",
+      status: "error",
+      detail: `resume failed: ${err instanceof Error ? err.message.slice(0, 500) : String(err)}`,
     });
     const failedVersion = latestPackageVersion(projectId);
     if (failedVersion?.status !== "ready") updatePackageVersionStatus(failedVersion.id, "failed");
